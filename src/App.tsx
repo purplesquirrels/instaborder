@@ -187,7 +187,7 @@ function App() {
             setFile(f);
           }}
         />
-        <label for="fileinput">Open</label>
+        <label htmlFor="fileinput">Open</label>
         {/* <button
           onClick={async () => {
             const f = await getFile();
