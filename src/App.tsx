@@ -2,23 +2,23 @@ import * as ExifReader from "exifreader";
 import { FormEvent, useEffect, useRef, useState } from "react";
 // import "./App.css";
 
-async function getFile() {
-  // Open file picker and destructure the result the first handle
-  const [fileHandle] = await window.showOpenFilePicker({
-    types: [
-      {
-        description: "Images",
-        accept: {
-          "image/*": [".jpeg", ".jpg"],
-        },
-      },
-    ],
-    excludeAcceptAllOption: true,
-    multiple: false,
-  });
-  const file = await fileHandle.getFile();
-  return file;
-}
+// async function getFile() {
+//   // Open file picker and destructure the result the first handle
+//   const [fileHandle] = await window.showOpenFilePicker({
+//     types: [
+//       {
+//         description: "Images",
+//         accept: {
+//           "image/*": [".jpeg", ".jpg"],
+//         },
+//       },
+//     ],
+//     excludeAcceptAllOption: true,
+//     multiple: false,
+//   });
+//   const file = await fileHandle.getFile();
+//   return file;
+// }
 
 function downloadImage(data: string, filename = "untitled.jpeg") {
   var a = document.createElement("a");
@@ -206,6 +206,8 @@ function App() {
             // var canvas = document.querySelector('#my-canvas');
 
             var dataURL = canvas.current?.toDataURL("image/jpeg", 1.0);
+
+            if (!dataURL) return;
 
             downloadImage(
               dataURL,
