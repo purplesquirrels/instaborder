@@ -87,7 +87,7 @@ function App() {
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
   const [exifEnabled, setExifEnabled] = useState(false);
-  const [glow, setGlow] = useState(false);
+  const [glow] = useState(false);
   const [bg, setBg] = useState<string>("black");
   const [file, setFile] = useState<File | null>(null);
   const [exif, setExif] = useState<ExifReader.Tags | null>(null);
