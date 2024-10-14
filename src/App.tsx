@@ -20,6 +20,14 @@ async function getFile() {
   return file;
 }
 
+function downloadImage(data: string, filename = "untitled.jpeg") {
+  var a = document.createElement("a");
+  a.href = data;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+}
+
 // function squircleRect(x: number, y: number, w: number, h: number, n: number) {
 //   const squircleoid = new Path2D();
 //   if (typeof n === "undefined") n = 1.0;
@@ -163,7 +171,23 @@ function App() {
   return (
     <div className="card">
       <div className="actions">
-        <button
+        <input
+          type="file"
+          accept="image/jpeg"
+          onChange={async (e) => {
+            // get file
+            const f = e.target.files?.[0];
+            if (!f) return;
+
+            const tags = await ExifReader.load(f);
+
+            console.log(tags);
+
+            setExif(tags);
+            setFile(f);
+          }}
+        />
+        {/* <button
           onClick={async () => {
             const f = await getFile();
 
@@ -176,40 +200,48 @@ function App() {
           }}
         >
           Open
-        </button>
+        </button> */}
         <button
           onClick={async () => {
-            if (!file) return;
+            // var canvas = document.querySelector('#my-canvas');
 
-            const options: SaveFilePickerOptions = {
-              types: [
-                {
-                  description: "Images",
-                  accept: {
-                    "image/jpeg": [".jpeg"],
-                  },
-                },
-              ],
-              suggestedName: `${file.name}_bordered.jpeg`,
-            };
+            var dataURL = canvas.current?.toDataURL("image/jpeg", 1.0);
 
-            canvas.current?.toBlob(
-              async (blob) => {
-                if (!blob) {
-                  alert("Save error");
-                  return;
-                }
-                const imgFileHandle = await window.showSaveFilePicker(options);
-
-                console.log("Save File chosen");
-
-                const writable = await imgFileHandle.createWritable();
-                await writable.write(blob);
-                await writable.close();
-              },
-              "image/jpeg",
-              1
+            downloadImage(
+              dataURL,
+              `${file?.name?.replace(".", "_")}_bordered.jpeg`
             );
+            // if (!file) return;
+
+            // const options: SaveFilePickerOptions = {
+            //   types: [
+            //     {
+            //       description: "Images",
+            //       accept: {
+            //         "image/jpeg": [".jpeg"],
+            //       },
+            //     },
+            //   ],
+            //   suggestedName: `${file.name}_bordered.jpeg`,
+            // };
+
+            // canvas.current?.toBlob(
+            //   async (blob) => {
+            //     if (!blob) {
+            //       alert("Save error");
+            //       return;
+            //     }
+            //     const imgFileHandle = await window.showSaveFilePicker(options);
+
+            //     console.log("Save File chosen");
+
+            //     const writable = await imgFileHandle.createWritable();
+            //     await writable.write(blob);
+            //     await writable.close();
+            //   },
+            //   "image/jpeg",
+            //   1
+            // );
           }}
         >
           Save
