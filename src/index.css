@@ -35,6 +35,8 @@ body {
 }
 
 canvas {
+  width: min(100vw, 800px);
+  aspect-ratio: 1 / 1;
   /* border: 2px solid #ccc; */
 }
 
