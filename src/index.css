@@ -16,7 +16,8 @@
 body {
   margin: 0;
   display: grid;
-  place-content: center;
+  align-content: start;
+  justify-content: center;
   min-width: 320px;
   min-height: 100vh;
 }
@@ -33,10 +34,12 @@ body {
   align-items: center;
   gap: 0.5rem;
   position:relative;
+  padding: 5px;
+  background: #000;
 }
 
 canvas {
-  width: min(100vw, 800px);
+  width: min(95vw, 800px);
   aspect-ratio: 1 / 1;
   /* border: 2px solid #ccc; */
 }

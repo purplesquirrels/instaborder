@@ -116,9 +116,9 @@ function App() {
         ctx.fillStyle = bg;
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-        const marginX = 100;
+        const marginX = 60;
         const marginY = 100;
-        const radius = 16;
+        const radius = 10;
 
         const aspect = img.naturalWidth / img.naturalHeight;
 
