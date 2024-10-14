@@ -171,7 +171,7 @@ function App() {
   return (
     <div className="card">
       <div className="actions">
-        <input
+        <input id="fileinput"
           type="file"
           accept="image/jpeg"
           onChange={async (e) => {
@@ -187,6 +187,7 @@ function App() {
             setFile(f);
           }}
         />
+        <label for="fileinput">Open</label>
         {/* <button
           onClick={async () => {
             const f = await getFile();
@@ -268,7 +269,7 @@ function App() {
           />
           <span>Light</span>
         </label>
-        <label>
+       {/* <label>
           <input
             type="checkbox"
             checked={glow}
@@ -277,7 +278,7 @@ function App() {
             }
           />
           <span>Aura</span>
-        </label>
+        </label>*/}
         {/* <label>
           <input
             type="color"

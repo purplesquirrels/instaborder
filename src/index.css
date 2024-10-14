@@ -32,6 +32,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  position:relative;
 }
 
 canvas {
@@ -39,7 +40,13 @@ canvas {
   aspect-ratio: 1 / 1;
   /* border: 2px solid #ccc; */
 }
-
+#fileinput{
+  position: absolute;
+  width:0;
+  height:0;
+  opacity:0;
+  overflow:hidden;
+}
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;
