@@ -80,6 +80,20 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
   return roundRect;
 }
 
+function readFile(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    if (file) {
+      var reader = new FileReader();
+
+      reader.onloadend = function () {
+        resolve(reader.result as string);
+      };
+
+      reader.readAsDataURL(file);
+    }
+  });
+}
+
 const CANVAS_WIDTH = 1440;
 const CANVAS_HEIGHT = 1440;
 
@@ -90,13 +104,23 @@ function App() {
   const [glow] = useState(false);
   const [bg, setBg] = useState<string>("black");
   const [rounded, setRounded] = useState<boolean>(true);
-  const [file, setFile] = useState<File | null>(null);
-  const [exif, setExif] = useState<ExifReader.Tags | null>(null);
+  // const [file, setFile] = useState<File | null>(null);
+  const [selectedFile, setSelectedFile] = useState<number>(0);
+  const [files, setFiles] = useState<Array<{
+    url: string;
+    file: File;
+    exif: ExifReader.Tags | null;
+  }> | null>(null);
+  // const [exif, setExif] = useState<ExifReader.Tags | null>(null);
+
+  const hasSelectedFile = files?.[selectedFile];
 
   useEffect(() => {
     const ctx = canvas.current?.getContext("2d");
 
-    if (ctx && file) {
+    if (ctx && files?.[selectedFile]) {
+      // const file = files[selectedFile].file;
+      const exif = files[selectedFile].exif;
       const img = new Image();
       img.onload = () => {
         const exposure = exif?.["ExposureTime"]?.description;
@@ -166,9 +190,9 @@ function App() {
           ctx.fillText(meta, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 48);
         }
       };
-      img.src = URL.createObjectURL(file);
+      img.src = files[selectedFile].url;
     }
-  }, [file, exif, exifEnabled, bg, glow, rounded]);
+  }, [files, selectedFile, exifEnabled, bg, glow, rounded]);
 
   return (
     <div className="card">
@@ -176,18 +200,35 @@ function App() {
         <input
           id="fileinput"
           type="file"
+          multiple={true}
           accept="image/jpeg"
           onChange={async (e) => {
             // get file
-            const f = e.target.files?.[0];
-            if (!f) return;
+            const fs = e.target.files;
+            if (!fs) return;
 
-            const tags = await ExifReader.load(f);
+            const first = fs[0];
 
-            console.log(tags);
+            if (!first) return;
 
-            setExif(tags);
-            setFile(f);
+            const filedata: Array<{
+              url: string;
+              file: File;
+              exif: ExifReader.Tags | null;
+            }> = [];
+
+            for (let i = 0; i < fs.length; i++) {
+              let url = await readFile(fs[i]);
+              filedata.push({ url, file: fs[i], exif: null });
+            }
+
+            const tags = await ExifReader.load(first);
+            // console.log(tags);
+            // setExif(tags);
+            filedata[0].exif = tags;
+
+            setSelectedFile(0);
+            setFiles(filedata);
           }}
         />
         <label className="filebutton" htmlFor="fileinput">
@@ -211,7 +252,7 @@ function App() {
 
         <label className="cb">
           <input
-            disabled={!file}
+            disabled={!hasSelectedFile}
             type="checkbox"
             checked={rounded}
             onChange={(e: FormEvent<HTMLInputElement>) =>
@@ -253,7 +294,7 @@ function App() {
         </label>
         <label className="cb">
           <input
-            disabled={!file}
+            disabled={!hasSelectedFile}
             type="checkbox"
             checked={exifEnabled}
             onChange={(e: FormEvent<HTMLInputElement>) =>
@@ -278,7 +319,7 @@ function App() {
         </label>
         <label className="cb">
           <input
-            disabled={!file}
+            disabled={!hasSelectedFile}
             type="checkbox"
             checked={bg === "white"}
             onChange={(e: FormEvent<HTMLInputElement>) =>
@@ -342,7 +383,7 @@ function App() {
           <span>Background</span>
         </label> */}
         <button
-          disabled={!file}
+          disabled={!hasSelectedFile}
           onClick={async () => {
             // var canvas = document.querySelector('#my-canvas');
 
@@ -352,7 +393,7 @@ function App() {
 
             downloadImage(
               dataURL,
-              `${file?.name?.replace(".", "_")}_bordered.jpeg`
+              `${files?.[selectedFile]?.file.name?.replace(".", "_")}_mat.jpeg`
             );
             // if (!file) return;
 
@@ -395,6 +436,35 @@ function App() {
         width={CANVAS_HEIGHT}
         height={CANVAS_HEIGHT}
       ></canvas>
+      {files && files.length > 1 ? (
+        <div className="filmstrip">
+          {files?.map((f, i) => (
+            <img
+              onDragStart={(e) => e.preventDefault()}
+              onClick={async () => {
+                if (!files[i].exif) {
+                  const tags = await ExifReader.load(files[i].file);
+                  setFiles((prev) => {
+                    if (!prev) return null;
+
+                    const updated = [...prev];
+                    updated[i].exif = tags;
+
+                    return updated;
+                  });
+                }
+
+                setSelectedFile(i);
+              }}
+              className={selectedFile === i ? "selected" : ""}
+              key={i + f.file.name}
+              src={f.url}
+              alt={f.file.name}
+              style={{ width: 100, height: 100 }}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
