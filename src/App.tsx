@@ -159,8 +159,8 @@ function App() {
         ctx.restore();
 
         if (exifEnabled) {
-          ctx.fillStyle = bg === "black" ? "#666" : "#BBB";
-          ctx.font = "bold 36px Courier New";
+          ctx.fillStyle = bg === "black" ? "#999" : "#999";
+          ctx.font = "bold 42px Courier New";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText(meta, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 48);
