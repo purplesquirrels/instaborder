@@ -80,8 +80,8 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
   return roundRect;
 }
 
-const CANVAS_WIDTH = 1080;
-const CANVAS_HEIGHT = 1080;
+const CANVAS_WIDTH = 1440;
+const CANVAS_HEIGHT = 1440;
 
 function App() {
   const canvas = useRef<HTMLCanvasElement | null>(null);
@@ -89,6 +89,7 @@ function App() {
   const [exifEnabled, setExifEnabled] = useState(false);
   const [glow] = useState(false);
   const [bg, setBg] = useState<string>("black");
+  const [rounded, setRounded] = useState<boolean>(true);
   const [file, setFile] = useState<File | null>(null);
   const [exif, setExif] = useState<ExifReader.Tags | null>(null);
 
@@ -107,7 +108,7 @@ function App() {
           focal ? focal + "mm" : false,
           ap,
           iso ? "ISO" + iso : false,
-          exposure,
+          exposure ? exposure + "s" : false,
         ]
           .filter(Boolean)
           .join(" | ");
@@ -116,29 +117,31 @@ function App() {
         ctx.fillStyle = bg;
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-        const marginX = 60;
-        const marginY = 100;
-        const radius = 10;
+        const marginL = 25;
+        const marginR = 25;
+        const marginT = 25;
+        const marginB = exifEnabled ? 100 : 25;
+        const radius = 30;
 
         const aspect = img.naturalWidth / img.naturalHeight;
 
         // calculate width and height if landscape
-        let w = CANVAS_WIDTH - marginX;
+        let w = CANVAS_WIDTH - marginL - marginR;
         let h = w / aspect;
 
         // size if portrait
-        if (h > CANVAS_HEIGHT - marginY) {
-          h = CANVAS_HEIGHT - marginY;
+        if (h > CANVAS_HEIGHT - marginT - marginB) {
+          h = CANVAS_HEIGHT - marginT - marginB;
           w = h * aspect;
         }
 
-        let x = marginX * 0.5;
+        let x = marginL;
         let y = ctx.canvas.height * 0.5 - h * 0.5;
 
         // position if portrait
-        if (h === CANVAS_HEIGHT - marginY) {
+        if (h === CANVAS_HEIGHT - marginT - marginB) {
           x = ctx.canvas.width * 0.5 - w * 0.5;
-          y = marginY * 0.5;
+          y = marginT;
         }
         if (glow) {
           ctx.filter = "blur(300px)";
@@ -149,29 +152,29 @@ function App() {
         }
 
         ctx.save();
-
-        ctx.clip(roundedRect(x, y, w, h, radius));
-
+        if (rounded) {
+          ctx.clip(roundedRect(x, y, w, h, radius));
+        }
         ctx.drawImage(img, x, y, w, h);
-
         ctx.restore();
 
         if (exifEnabled) {
-          ctx.fillStyle = "#999";
-          ctx.font = "bold 24px Courier New";
+          ctx.fillStyle = bg === "black" ? "#666" : "#BBB";
+          ctx.font = "bold 36px Courier New";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText(meta, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 20);
+          ctx.fillText(meta, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 48);
         }
       };
       img.src = URL.createObjectURL(file);
     }
-  }, [file, exif, exifEnabled, bg, glow]);
+  }, [file, exif, exifEnabled, bg, glow, rounded]);
 
   return (
     <div className="card">
       <div className="actions">
-        <input id="fileinput"
+        <input
+          id="fileinput"
           type="file"
           accept="image/jpeg"
           onChange={async (e) => {
@@ -187,7 +190,9 @@ function App() {
             setFile(f);
           }}
         />
-        <label htmlFor="fileinput">Open</label>
+        <label className="filebutton" htmlFor="fileinput">
+          Open
+        </label>
         {/* <button
           onClick={async () => {
             const f = await getFile();
@@ -202,7 +207,63 @@ function App() {
         >
           Open
         </button> */}
+        <span className="spacer" />
+
+        <label className="cb">
+          <input
+            disabled={!file}
+            type="checkbox"
+            checked={rounded}
+            onChange={(e: FormEvent<HTMLInputElement>) =>
+              setRounded(e.currentTarget.checked)
+            }
+          />
+          <span>Rounded</span>
+        </label>
+        <label className="cb">
+          <input
+            disabled={!file}
+            type="checkbox"
+            checked={exifEnabled}
+            onChange={(e: FormEvent<HTMLInputElement>) =>
+              setExifEnabled(e.currentTarget.checked)
+            }
+          />
+          <span>EXIF</span>
+        </label>
+        <label className="cb">
+          <input
+            disabled={!file}
+            type="checkbox"
+            checked={bg === "white"}
+            onChange={(e: FormEvent<HTMLInputElement>) =>
+              setBg(e.currentTarget.checked ? "white" : "black")
+            }
+          />
+          <span>Light</span>
+        </label>
+        {/* <label>
+          <input
+            type="checkbox"
+            checked={glow}
+            onChange={(e: FormEvent<HTMLInputElement>) =>
+              setGlow(e.currentTarget.checked)
+            }
+          />
+          <span>Aura</span>
+        </label>*/}
+        {/* <label>
+          <input
+            type="color"
+            value={bg}
+            onChange={(e: FormEvent<HTMLInputElement>) =>
+              setBg(e.currentTarget.value)
+            }
+          />
+          <span>Background</span>
+        </label> */}
         <button
+          disabled={!file}
           onClick={async () => {
             // var canvas = document.querySelector('#my-canvas');
 
@@ -249,46 +310,6 @@ function App() {
         >
           Save
         </button>
-        <label>
-          <input
-            type="checkbox"
-            checked={exifEnabled}
-            onChange={(e: FormEvent<HTMLInputElement>) =>
-              setExifEnabled(e.currentTarget.checked)
-            }
-          />
-          <span>EXIF</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={bg === "white"}
-            onChange={(e: FormEvent<HTMLInputElement>) =>
-              setBg(e.currentTarget.checked ? "white" : "black")
-            }
-          />
-          <span>Light</span>
-        </label>
-       {/* <label>
-          <input
-            type="checkbox"
-            checked={glow}
-            onChange={(e: FormEvent<HTMLInputElement>) =>
-              setGlow(e.currentTarget.checked)
-            }
-          />
-          <span>Aura</span>
-        </label>*/}
-        {/* <label>
-          <input
-            type="color"
-            value={bg}
-            onChange={(e: FormEvent<HTMLInputElement>) =>
-              setBg(e.currentTarget.value)
-            }
-          />
-          <span>Background</span>
-        </label> */}
       </div>
       <canvas
         ref={canvas}
