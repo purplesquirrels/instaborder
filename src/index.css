@@ -36,7 +36,7 @@ body {
 .actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   position: relative;
   padding: 10px 10px;
   background: #2e2e2e;
@@ -103,7 +103,7 @@ button,
   gap: 5px;
   position: relative;
   border-radius: 8px;
-  padding: 10px 0;
+  padding: 6px;
   line-height: 1;
   font-weight: 500;
 
@@ -121,7 +121,15 @@ button,
     opacity: 0;
   }
 
-  &::before {
+  svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+  }
+
+  border: 1px solid #555;
+
+  /* &::before {
     content: "";
     display: grid;
     place-content: center;
@@ -130,16 +138,30 @@ button,
     border-radius: 0.25rem;
     border: 2px solid #747bff;
     background: transparent;
-  }
+  } */
 
   &:has(input[type="checkbox"]:disabled) {
     opacity: 0.1;
     pointer-events: none;
   }
 
-  &:has(input[type="checkbox"]:checked)::before {
-    content: "✔";
+  &:has(input[type="checkbox"]:checked) {
+    /* content: "✔"; */
     background: #747bff;
+    border: 1px solid #747bff;
     /* border-color: #fff; */
   }
+}
+
+.screenreader {
+  height: 1px !important;
+  width: 1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  position: absolute !important;
+  clip: rect(1px, 1px, 1px, 1px);
+  clip-path: inset(1px 1px 1px 1px);
+  white-space: nowrap;
+  overflow: hidden;
+  opacity: 0;
 }
