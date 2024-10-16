@@ -7,6 +7,9 @@ import {
   useSyncExternalStore,
 } from "react";
 
+import Lottie from "react-lottie-player";
+import lottieJson from "./loader.json";
+
 interface PhotoData {
   url: string;
   file: File;
@@ -144,6 +147,7 @@ function App() {
   const [rounded, setRounded] = useState<boolean>(true);
   const [selectedFile, setSelectedFile] = useState<number>(0);
   const [state, setState] = useState<AppState>("start");
+  const [loadCount, setLoadCount] = useState<number>(0);
 
   const photoshop = usePhotoshop();
 
@@ -241,6 +245,7 @@ function App() {
 
             if (!first) return;
 
+            setLoadCount(fs.length);
             setState("loading");
 
             store.setState((state) => {
@@ -451,7 +456,19 @@ function App() {
           ))}
         </div>
       ) : null}
-      {state === "loading" ? <div className="fsloader">LOADING</div> : null}
+      {state === "loading" ? (
+        <div className="fsloader">
+          <Lottie
+            loop
+            animationData={lottieJson}
+            play
+            style={{ width: 150, height: 150 }}
+          />
+          <span>
+            Loading {files ? files.length + 1 : 1} of {loadCount}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
