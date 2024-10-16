@@ -157,7 +157,7 @@ function App() {
   const [rounded, setRounded] = useState<boolean>(true);
   const [selectedFile, setSelectedFile] = useState<number>(0);
   const [state, setState] = useState<AppState>("start");
-  const [loadCount, setLoadCount] = useState<number>(0);
+  // const [loadCount, setLoadCount] = useState<number>(0);
 
   const photoshop = usePhotoshop();
 
@@ -250,7 +250,7 @@ function App() {
 
     if (!first) return;
 
-    setLoadCount(files.length);
+    // setLoadCount(files.length);
     setState("loading");
 
     console.log({ action });
