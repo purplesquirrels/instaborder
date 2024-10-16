@@ -106,7 +106,9 @@ function readFile(file: File): Promise<PhotoData> {
         offscreenCanvas.width = w;
         offscreenCanvas.height = h;
 
-        offscreenCanvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+        offscreenCanvas
+          .getContext("2d", { alpha: false })
+          ?.drawImage(img, 0, 0, w, h);
 
         const photo = {
           url: offscreenCanvas.toDataURL("image/jpeg", 0.8),
@@ -138,7 +140,6 @@ function App() {
   const [rounded, setRounded] = useState<boolean>(true);
   const [selectedFile, setSelectedFile] = useState<number>(0);
   const [state, setState] = useState<AppState>("start");
-  // const [files, setFiles] = useState<Array<PhotoData> | null>(null);
 
   const photoshop = usePhotoshop();
 
@@ -147,12 +148,10 @@ function App() {
   const hasSelectedFile = files?.[selectedFile];
 
   useEffect(() => {
-    const ctx = canvas.current?.getContext("2d");
+    const ctx = canvas.current?.getContext("2d", { alpha: false });
 
     if (ctx && files?.[selectedFile]) {
       const exif = files[selectedFile].exif;
-      // const img = new Image();
-      // img.onload = () => {
       const exposure = exif?.["ExposureTime"]?.description;
       const ap = exif?.["FNumber"]?.description;
       const iso = exif?.["ISOSpeedRatings"]?.description;
@@ -219,8 +218,6 @@ function App() {
         ctx.textBaseline = "middle";
         ctx.fillText(meta, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 48);
       }
-      // };
-      // img.src = files[selectedFile].url;
     }
   }, [files, selectedFile, exifEnabled, bg, glow, rounded]);
 
@@ -233,7 +230,6 @@ function App() {
           multiple={true}
           accept="image/jpeg"
           onChange={async (e) => {
-            // get file
             const fs = e.target.files;
             if (!fs) return;
 
@@ -247,19 +243,11 @@ function App() {
               return { ...state, files: [] };
             });
 
-            // const filedata: Array<PhotoData> = [];
+            setSelectedFile(0);
 
             for (let i = 0; i < fs.length; i++) {
-              // let photo = await
               await readFile(fs[i]);
-              // filedata.push(photo);
             }
-
-            // const tags = await ExifReader.load(first);
-            // filedata[0].exif = tags;
-
-            setSelectedFile(0);
-            // setFiles(filedata);
 
             setState("editing");
           }}
