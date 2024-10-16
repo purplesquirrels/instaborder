@@ -1,5 +1,11 @@
 import * as ExifReader from "exifreader";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 interface PhotoData {
   url: string;
@@ -13,6 +19,42 @@ interface PhotoData {
 const CANVAS_WIDTH = 1440;
 const CANVAS_HEIGHT = 1440;
 const CANVAS_MARGIN = 25;
+
+const APP_STATE = {
+  Start: "start",
+  Loading: "loading",
+  Editing: "editing",
+  Saving: "saving",
+} as const;
+
+type AppState = (typeof APP_STATE)[keyof typeof APP_STATE];
+
+function createStore<T>(initialState: T): {
+  getSnapshot: () => T;
+  setState: (fn: (state: T) => T) => void;
+  subscribe: (listener: () => void) => () => void;
+} {
+  let state = initialState;
+  const getSnapshot = () => state;
+  const listeners = new Set<() => void>();
+  const setState = (fn: (state: T) => T) => {
+    state = fn(state);
+    listeners.forEach((l: () => void) => l());
+  };
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  return { getSnapshot, setState, subscribe };
+}
+
+const store = createStore<{ files: Array<PhotoData> }>({
+  files: [],
+});
+
+function usePhotoshop() {
+  return useSyncExternalStore(store.subscribe, () => store.getSnapshot());
+}
 
 function downloadImage(data: string, filename = "untitled.jpeg") {
   var a = document.createElement("a");
@@ -35,51 +77,55 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
 
 function readFile(file: File): Promise<PhotoData> {
   return new Promise((resolve) => {
-    if (file) {
-      var reader = new FileReader();
+    var reader = new FileReader();
 
-      reader.onloadend = async function () {
-        const tags = await ExifReader.load(file);
+    reader.onloadend = async function () {
+      const tags = await ExifReader.load(file);
 
-        const img = new Image();
-        img.onload = () => {
-          const offscreenCanvas = document.createElement("canvas");
+      const img = new Image();
+      img.onload = () => {
+        const offscreenCanvas = document.createElement("canvas");
 
-          const marginL = CANVAS_MARGIN;
-          const marginR = CANVAS_MARGIN;
-          const marginT = CANVAS_MARGIN;
-          const marginB = CANVAS_MARGIN;
+        const marginL = CANVAS_MARGIN;
+        const marginR = CANVAS_MARGIN;
+        const marginT = CANVAS_MARGIN;
+        const marginB = CANVAS_MARGIN;
 
-          const aspect = img.naturalWidth / img.naturalHeight;
+        const aspect = img.naturalWidth / img.naturalHeight;
 
-          // calculate width and height if landscape
-          let w = CANVAS_WIDTH - marginL - marginR;
-          let h = w / aspect;
+        // calculate width and height if landscape
+        let w = CANVAS_WIDTH - marginL - marginR;
+        let h = w / aspect;
 
-          // size if portrait
-          if (h > CANVAS_HEIGHT - marginT - marginB) {
-            h = CANVAS_HEIGHT - marginT - marginB;
-            w = h * aspect;
-          }
+        // size if portrait
+        if (h > CANVAS_HEIGHT - marginT - marginB) {
+          h = CANVAS_HEIGHT - marginT - marginB;
+          w = h * aspect;
+        }
 
-          offscreenCanvas.width = w;
-          offscreenCanvas.height = h;
+        offscreenCanvas.width = w;
+        offscreenCanvas.height = h;
 
-          offscreenCanvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
+        offscreenCanvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
 
-          resolve({
-            url: reader.result as string,
-            file,
-            exif: tags,
-            image: offscreenCanvas,
-            width: w,
-            height: h,
-          });
+        const photo = {
+          url: offscreenCanvas.toDataURL("image/jpeg", 0.8),
+          file,
+          exif: tags,
+          image: offscreenCanvas,
+          width: w,
+          height: h,
         };
-        img.src = reader.result as string;
+
+        store.setState((state) => {
+          return { ...state, files: [...state.files, photo] };
+        });
+
+        resolve(photo);
       };
-      reader.readAsDataURL(file);
-    }
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
   });
 }
 
@@ -91,7 +137,12 @@ function App() {
   const [bg, setBg] = useState<string>("black");
   const [rounded, setRounded] = useState<boolean>(true);
   const [selectedFile, setSelectedFile] = useState<number>(0);
-  const [files, setFiles] = useState<Array<PhotoData> | null>(null);
+  const [state, setState] = useState<AppState>("start");
+  // const [files, setFiles] = useState<Array<PhotoData> | null>(null);
+
+  const photoshop = usePhotoshop();
+
+  const files = photoshop.files;
 
   const hasSelectedFile = files?.[selectedFile];
 
@@ -123,7 +174,7 @@ function App() {
       const marginL = CANVAS_MARGIN;
       const marginR = CANVAS_MARGIN;
       const marginT = CANVAS_MARGIN;
-      const marginB = exifEnabled ? 100 : CANVAS_MARGIN;
+      const marginB = exifEnabled && meta !== "" ? 100 : CANVAS_MARGIN;
       const radius = 30;
 
       const aspect = files[selectedFile].width / files[selectedFile].height;
@@ -175,7 +226,7 @@ function App() {
 
   return (
     <div className="card">
-      <div className="actions">
+      <div className="actions" style={{ margin: 0, borderRadius: 0 }}>
         <input
           id="fileinput"
           type="file"
@@ -190,25 +241,97 @@ function App() {
 
             if (!first) return;
 
-            const filedata: Array<PhotoData> = [];
+            setState("loading");
+
+            store.setState((state) => {
+              return { ...state, files: [] };
+            });
+
+            // const filedata: Array<PhotoData> = [];
 
             for (let i = 0; i < fs.length; i++) {
-              let photo = await readFile(fs[i]);
-              filedata.push(photo);
+              // let photo = await
+              await readFile(fs[i]);
+              // filedata.push(photo);
             }
 
             // const tags = await ExifReader.load(first);
             // filedata[0].exif = tags;
 
             setSelectedFile(0);
-            setFiles(filedata);
+            // setFiles(filedata);
+
+            setState("editing");
           }}
         />
         <label className="filebutton" htmlFor="fileinput">
-          Open
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M5.5 8.5C5.5 6.84315 6.84315 5.5 8.5 5.5C10.1569 5.5 11.5 6.84315 11.5 8.5C11.5 10.1569 10.1569 11.5 8.5 11.5C6.84315 11.5 5.5 10.1569 5.5 8.5Z"
+              fill="currentColor"
+            />
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M12.5 2H7.7587C6.95374 1.99999 6.28937 1.99998 5.74818 2.04419C5.18608 2.09012 4.66937 2.18868 4.18404 2.43598C3.43139 2.81947 2.81947 3.43139 2.43598 4.18404C2.18868 4.66937 2.09012 5.18608 2.04419 5.74818C1.99998 6.28937 1.99999 6.95372 2 7.75869V16.2413C1.99999 17.0463 1.99998 17.7106 2.04419 18.2518C2.09012 18.8139 2.18868 19.3306 2.43598 19.816C2.81947 20.5686 3.43139 21.1805 4.18404 21.564C4.66937 21.8113 5.18608 21.9099 5.74818 21.9558C5.92356 21.9701 6.11188 21.9798 6.31374 21.9864C6.52305 22.0003 6.7734 22.0002 7.03144 22.0002C10.3543 22.0002 13.6771 22 17 22C17.0465 22 17.0924 22 17.1376 22C17.933 22.0005 18.5236 22.0008 19.0353 21.8637C20.4156 21.4938 21.4938 20.4156 21.8637 19.0353C22.039 18.381 22.0002 17.6804 22 17.0095C22.0018 16.8202 22.0001 16.6308 22.0001 16.4415C22.0006 15.9726 22.0011 15.5594 21.8923 15.1647C21.7969 14.8182 21.6399 14.4917 21.429 14.2007C21.1887 13.8692 20.8658 13.6114 20.4993 13.3189L17.6683 11.0541C17.4984 10.9182 17.3304 10.7838 17.1779 10.6797C17.0083 10.5639 16.7995 10.4436 16.5382 10.3766C16.1709 10.2824 15.7843 10.2946 15.4237 10.4118C15.1671 10.4951 14.9663 10.6283 14.8043 10.7545C14.6586 10.8681 14.4995 11.0128 14.3385 11.1592L5.83046 18.8938C5.61698 19.0878 5.41061 19.2754 5.2589 19.4395C5.19807 19.5054 5.10567 19.6077 5.01929 19.743C4.67627 19.5501 4.39723 19.2598 4.21799 18.908C4.1383 18.7516 4.07337 18.5274 4.03755 18.089C4.00078 17.6389 4 17.0566 4 16.2V7.8C4 6.94342 4.00078 6.36113 4.03755 5.91104C4.07337 5.47262 4.1383 5.24842 4.21799 5.09202C4.40973 4.7157 4.7157 4.40973 5.09202 4.21799C5.24842 4.1383 5.47262 4.07337 5.91104 4.03755C6.36113 4.00078 6.94342 4 7.8 4H12.5C13.0523 4 13.5 3.55229 13.5 3C13.5 2.44772 13.0523 2 12.5 2Z"
+              fill="currentColor"
+            />
+            <path
+              d="M20 2C20 1.44772 19.5523 1 19 1C18.4477 1 18 1.44772 18 2V4H16C15.4477 4 15 4.44772 15 5C15 5.55228 15.4477 6 16 6H18V8C18 8.55228 18.4477 9 19 9C19.5523 9 20 8.55228 20 8V6H22C22.5523 6 23 5.55228 23 5C23 4.44772 22.5523 4 22 4H20V2Z"
+              fill="currentColor"
+            />
+          </svg>
         </label>
         <span className="spacer" />
+        <span className="app-title">Photo-mat-ic</span>
+        <span className="spacer" />
+        <button
+          aria-label="Save"
+          title="Save"
+          disabled={!hasSelectedFile}
+          onClick={async () => {
+            var dataURL = canvas.current?.toDataURL("image/jpeg", 1.0);
 
+            if (!dataURL) return;
+
+            downloadImage(
+              dataURL,
+              `${files?.[selectedFile]?.file.name?.replace(".", "_")}_mat.jpeg`
+            );
+          }}
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M13 3C13 2.44772 12.5523 2 12 2C11.4477 2 11 2.44772 11 3V14.5858L6.70711 10.2929C6.31658 9.90237 5.68342 9.90237 5.29289 10.2929C4.90237 10.6834 4.90237 11.3166 5.29289 11.7071L11.2929 17.7071C11.6834 18.0976 12.3166 18.0976 12.7071 17.7071L18.7071 11.7071C19.0976 11.3166 19.0976 10.6834 18.7071 10.2929C18.3166 9.90237 17.6834 9.90237 17.2929 10.2929L13 14.5858V3Z"
+              fill="currentColor"
+            />
+            <path
+              d="M2 21C2 20.4477 2.44772 20 3 20H21C21.5523 20 22 20.4477 22 21C22 21.5523 21.5523 22 21 22H3C2.44772 22 2 21.5523 2 21Z"
+              fill="currentColor"
+            />
+          </svg>
+        </button>
+      </div>
+      <canvas
+        ref={canvas}
+        width={CANVAS_HEIGHT}
+        height={CANVAS_HEIGHT}
+      ></canvas>
+      <div className="actions" style={{ alignSelf: "center", margin: 0 }}>
         <label className="cb">
           <input
             disabled={!hasSelectedFile}
@@ -320,57 +443,23 @@ function App() {
             </svg>
           )}
         </label>
-        <span className="spacer" />
-        <button
-          disabled={!hasSelectedFile}
-          onClick={async () => {
-            var dataURL = canvas.current?.toDataURL("image/jpeg", 1.0);
-
-            if (!dataURL) return;
-
-            downloadImage(
-              dataURL,
-              `${files?.[selectedFile]?.file.name?.replace(".", "_")}_mat.jpeg`
-            );
-          }}
-        >
-          Save
-        </button>
       </div>
-      <canvas
-        ref={canvas}
-        width={CANVAS_HEIGHT}
-        height={CANVAS_HEIGHT}
-      ></canvas>
       {files && files.length > 1 ? (
         <div className="filmstrip">
           {files?.map((f, i) => (
             <img
               onDragStart={(e) => e.preventDefault()}
-              onClick={async () => {
-                // if (!files[i].exif) {
-                //   const tags = await ExifReader.load(files[i].file);
-                //   setFiles((prev) => {
-                //     if (!prev) return null;
-
-                //     const updated = [...prev];
-                //     updated[i].exif = tags;
-
-                //     return updated;
-                //   });
-                // }
-
-                setSelectedFile(i);
-              }}
+              onClick={() => setSelectedFile(i)}
               className={selectedFile === i ? "selected" : ""}
               key={i + f.file.name}
               src={f.url}
               alt={f.file.name}
-              style={{ width: 100, height: 100 }}
+              style={{ width: 100, height: 100, background: bg }}
             />
           ))}
         </div>
       ) : null}
+      {state === "loading" ? <div className="fsloader">LOADING</div> : null}
     </div>
   );
 }
