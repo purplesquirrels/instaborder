@@ -75,7 +75,7 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
   return roundRect;
 }
 
-function readFile(file: File): Promise<PhotoData> {
+function readFile(file: File): Promise<PhotoData | void> {
   return new Promise((resolve) => {
     var reader = new FileReader();
 
@@ -124,6 +124,10 @@ function readFile(file: File): Promise<PhotoData> {
         });
 
         resolve(photo);
+      };
+      img.onerror = () => {
+        alert("Unable to load image");
+        resolve();
       };
       img.src = reader.result as string;
     };
