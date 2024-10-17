@@ -51,7 +51,11 @@ function createStore<T>(initialState: T): {
   return { getSnapshot, setState, subscribe };
 }
 
-const store = createStore<{ files: Array<PhotoData> }>({
+const store = createStore<{
+  files: Array<PhotoData>;
+  loadstate: [number, number];
+}>({
+  loadstate: [0, 0],
   files: [],
 });
 
@@ -80,21 +84,30 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
 
 function readFile(file: File): Promise<PhotoData | void> {
   return new Promise((resolve) => {
-    var reader = new FileReader();
+    const reader = new FileReader();
 
-    // var worker = new Worker("image-worker.js");
-    // console.log("start", file.name);
+    const offscreenCanvas = document.createElement("canvas");
+    // const offscreen = offscreenCanvas.transferControlToOffscreen();
+    // const worker = new Worker("canvas-worker.js");
+    // worker.postMessage({ action:"init", canvas: offscreen }, [offscreen]);
+
+    console.time("readfile");
 
     reader.onloadend = async function () {
-      const tags = await ExifReader.load(file);
-      // console.log("reader done", file.name);
+      console.timeEnd("readfile");
 
+      // worker.postMessage({ action:"data", canvas: offscreen }, [offscreen]);
+
+      console.time("exif");
+      const tags = await ExifReader.load(file);
+      console.timeEnd("exif");
+
+      console.time("loadimage");
       const img = new Image();
       img.onload = () => {
-        // console.log("img loaded", file.name);
+        console.timeEnd("loadimage");
 
-        const offscreenCanvas = document.createElement("canvas");
-
+        console.time("resize");
         const marginL = CANVAS_MARGIN;
         const marginR = CANVAS_MARGIN;
         const marginT = CANVAS_MARGIN;
@@ -123,6 +136,8 @@ function readFile(file: File): Promise<PhotoData | void> {
           .getContext("2d", { alpha: false })
           ?.drawImage(img, 0, 0, w, h);
 
+        console.timeEnd("resize");
+
         const photo = {
           url: offscreenCanvas.toDataURL("image/jpeg", 0.8),
           file,
@@ -133,7 +148,11 @@ function readFile(file: File): Promise<PhotoData | void> {
         };
 
         store.setState((state) => {
-          return { ...state, files: [...state.files, photo] };
+          return {
+            ...state,
+            files: [...state.files, photo],
+            loadstate: [state.loadstate[0] + 1, state.loadstate[1]],
+          };
         });
 
         resolve(photo);
@@ -157,7 +176,6 @@ function App() {
   const [rounded, setRounded] = useState<boolean>(true);
   const [selectedFile, setSelectedFile] = useState<number>(0);
   const [state, setState] = useState<AppState>("start");
-  // const [loadCount, setLoadCount] = useState<number>(0);
 
   const photoshop = usePhotoshop();
 
@@ -243,17 +261,17 @@ function App() {
     files: FileList | null,
     action: "append" | "replace" = "replace"
   ) {
-    // const fs = e.target.files;
     if (!files) return;
 
     const first = files[0];
 
     if (!first) return;
 
-    // setLoadCount(files.length);
-    setState("loading");
+    store.setState((state) => {
+      return { ...state, loadstate: [1, files.length] };
+    });
 
-    console.log({ action });
+    setState("loading");
 
     if (action === "replace") {
       store.setState((state) => {
@@ -515,9 +533,11 @@ function App() {
             play
             style={{ width: 150, height: 150 }}
           />
-          {/* <span>
-            Loading {files ? files.length + 1 : 1} of {loadCount}
-          </span> */}
+          {
+            <span>
+              Loading {photoshop.loadstate[0]} of {photoshop.loadstate[1]}
+            </span>
+          }
         </div>
       ) : null}
     </>

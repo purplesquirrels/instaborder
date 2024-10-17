@@ -225,6 +225,14 @@ button,
   }
 }
 
+.filmstrip-add .filebutton {
+  background: #1f1f1f;
+  border: 1.5px solid #555;
+  &:before {
+    content: none;
+  }
+}
+
 .cb {
   -webkit-tap-hightlight: transparent;
   display: flex;
@@ -276,24 +284,24 @@ button,
 
   &:has(input[type="checkbox"]:checked) {
     /* content: "✔"; */
-    /* background: #747bff; */
+    color: #000;
+    background: #fff;
     position: relative;
     z-index: 1;
-    background: linear-gradient(
+    /* background: linear-gradient(
           0deg,
           rgba(40, 40, 40, 0.2),
           rgba(40, 40, 40, 0.2)
         )
         border-box,
-      /* linear-gradient(0deg, transparent, #111) padding-box, */
         linear-gradient(
           to bottom right in oklch,
           var(--grad-stop-1) 10%,
           var(--grad-stop-2) 50%,
           var(--grad-stop-3)
         )
-        border-box;
-    border: 1.5px solid transparent;
+        border-box; */
+    border: 1.5px solid #fff;
     box-shadow: none;
 
     &:before {
@@ -310,10 +318,6 @@ button,
       z-index: -1;
       filter: blur(10px);
     }
-
-    /* box-shadow: inset 0 -1px 1px #0000003b, inset 0 1px 1px #ffffff75; */
-    border: 1.5px solid #fff;
-    /* border-color: #fff; */
   }
 }
 
@@ -347,7 +351,7 @@ button,
     object-fit: contain;
   }
   img.selected {
-    border: 4px solid #646cff;
+    border: 4px solid #fff;
   }
   .filmstrip-add {
     padding: 1rem;
