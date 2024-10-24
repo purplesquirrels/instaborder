@@ -7,9 +7,6 @@ import {
   useSyncExternalStore,
 } from "react";
 
-import Lottie from "react-lottie-player";
-import lottieJson from "./loader.json";
-
 interface PhotoData {
   url: string;
   file: File;
@@ -19,9 +16,11 @@ interface PhotoData {
   height: number;
 }
 
+const ASPECT_RATIO = 4 / 5;
 const CANVAS_WIDTH = 1440;
-const CANVAS_HEIGHT = 1440;
+const CANVAS_HEIGHT = 1440 / ASPECT_RATIO;
 const CANVAS_MARGIN = 25;
+const CORNER_RADIUS = 20;
 
 const APP_STATE = {
   Start: "start",
@@ -85,29 +84,12 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
 function readFile(file: File): Promise<PhotoData | void> {
   return new Promise((resolve) => {
     const reader = new FileReader();
-
     const offscreenCanvas = document.createElement("canvas");
-    // const offscreen = offscreenCanvas.transferControlToOffscreen();
-    // const worker = new Worker("canvas-worker.js");
-    // worker.postMessage({ action:"init", canvas: offscreen }, [offscreen]);
-
-    console.time("readfile");
-
     reader.onloadend = async function () {
-      console.timeEnd("readfile");
-
-      // worker.postMessage({ action:"data", canvas: offscreen }, [offscreen]);
-
-      console.time("exif");
       const tags = await ExifReader.load(file);
-      console.timeEnd("exif");
 
-      console.time("loadimage");
       const img = new Image();
       img.onload = () => {
-        console.timeEnd("loadimage");
-
-        console.time("resize");
         const marginL = CANVAS_MARGIN;
         const marginR = CANVAS_MARGIN;
         const marginT = CANVAS_MARGIN;
@@ -119,27 +101,35 @@ function readFile(file: File): Promise<PhotoData | void> {
         let w = CANVAS_WIDTH - marginL - marginR;
         let h = w / aspect;
 
+        let thumbW = 100;
+        let thumbH = 100 / aspect;
+
         // size if portrait
         if (h > CANVAS_HEIGHT - marginT - marginB) {
           h = CANVAS_HEIGHT - marginT - marginB;
           w = h * aspect;
+
+          thumbH = 100;
+          thumbW = 100 * aspect;
         }
 
         offscreenCanvas.width = w;
         offscreenCanvas.height = h;
 
-        // worker.postMessage({
-        //   imageData: img
-        // })
-
         offscreenCanvas
           .getContext("2d", { alpha: false })
           ?.drawImage(img, 0, 0, w, h);
 
-        console.timeEnd("resize");
+        const thumbCanvas = document.createElement("canvas");
+        thumbCanvas.width = thumbW;
+        thumbCanvas.height = thumbH;
+
+        thumbCanvas
+          .getContext("2d", { alpha: false })
+          ?.drawImage(img, 0, 0, thumbW, thumbH);
 
         const photo = {
-          url: offscreenCanvas.toDataURL("image/jpeg", 0.8),
+          url: thumbCanvas.toDataURL("image/jpeg", 0.6),
           file,
           exif: tags,
           image: offscreenCanvas,
@@ -210,7 +200,6 @@ function App() {
       const marginR = CANVAS_MARGIN;
       const marginT = CANVAS_MARGIN;
       const marginB = exifEnabled && meta !== "" ? 100 : CANVAS_MARGIN;
-      const radius = 30;
 
       const aspect = files[selectedFile].width / files[selectedFile].height;
 
@@ -242,7 +231,7 @@ function App() {
 
       ctx.save();
       if (rounded) {
-        ctx.clip(roundedRect(x, y, w, h, radius));
+        ctx.clip(roundedRect(x, y, w, h, CORNER_RADIUS));
       }
       ctx.drawImage(files[selectedFile].image, x, y, w, h);
       ctx.restore();
@@ -364,8 +353,9 @@ function App() {
       <div className="canvas-wrap">
         <canvas
           ref={canvas}
-          width={CANVAS_HEIGHT}
+          width={CANVAS_WIDTH}
           height={CANVAS_HEIGHT}
+          style={{ aspectRatio: ASPECT_RATIO }}
         ></canvas>
         {files && files.length > 0 ? (
           <div className="actions">
@@ -527,17 +517,16 @@ function App() {
       </div>
       {state === "loading" ? (
         <div className="fsloader">
-          <Lottie
-            loop
-            animationData={lottieJson}
-            play
-            style={{ width: 150, height: 150 }}
-          />
-          {
-            <span>
-              Loading {photoshop.loadstate[0]} of {photoshop.loadstate[1]}
-            </span>
-          }
+          <iframe
+            onLoad={(e) => {
+              const el = e.currentTarget as HTMLIFrameElement;
+              el.style.opacity = "1";
+            }}
+            style={{ opacity: 0 }}
+            src="/loader.html"
+            sandbox="allow-scripts"
+            title="Loading"
+          ></iframe>
         </div>
       ) : null}
     </>

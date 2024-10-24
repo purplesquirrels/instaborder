@@ -137,7 +137,7 @@ body {
 
 canvas {
   max-width: min(95vw, 1000px);
-  max-height: calc(100dvh - 310px);
+  max-height: calc(100dvh - 330px);
   aspect-ratio: 1 / 1;
   background: #000;
   justify-self: center;
@@ -340,7 +340,8 @@ button,
   overflow-x: auto;
   max-width: 100vw;
   gap: 10px;
-  padding: 10px;
+  padding-top: 10px;
+  padding-bottom: 30px;
   align-items: center;
   justify-self: center;
 
@@ -351,7 +352,7 @@ button,
     object-fit: contain;
   }
   img.selected {
-    border: 4px solid #fff;
+    border: 4px solid oklch(0.55 0.29 289.09);
   }
   .filmstrip-add {
     padding: 1rem;
@@ -366,4 +367,14 @@ button,
   place-content: center;
   text-align: center;
   font-weight: bold;
+  overflow: hidden;
+
+  iframe {
+    background-color: transparent;
+    border: none;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
 }
