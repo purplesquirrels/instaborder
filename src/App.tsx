@@ -1,4 +1,4 @@
-import * as ExifReader from "exifreader";
+import type * as ExifReader from "exifreader";
 import {
   FormEvent,
   useEffect,
@@ -6,6 +6,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { decodePhoto, loadPhoto } from "./imageLoader";
+import type { LoadedPhoto } from "./imageProcessing";
 
 type CropShape = "original" | "portrait" | "landscape";
 
@@ -18,12 +20,17 @@ interface Crop {
 }
 
 interface PhotoData {
+  id: number;
+  // object URL of the filmstrip thumbnail
   url: string;
   file: File;
   exif: ExifReader.Tags | null;
   caption: string;
   crop: Crop;
-  image: CanvasImageSource;
+  // small placeholder, drawn until `image` has been decoded
+  thumb: ImageBitmap;
+  // working-resolution bitmap, only kept for recently viewed photos
+  image: ImageBitmap | null;
   width: number;
   height: number;
 }
@@ -83,11 +90,59 @@ function createStore<T>(initialState: T): {
 
 const store = createStore<{
   files: Array<PhotoData>;
+  // [loaded, total]
   loadstate: [number, number];
 }>({
   loadstate: [0, 0],
   files: [],
 });
+
+// how many photos keep a decoded full image; the rest drop back to thumbnails
+const DECODED_CACHE_SIZE = 2;
+let nextPhotoId = 0;
+// bumped when the photo list is replaced, so stale loads are discarded
+let loadGeneration = 0;
+// most recently viewed photo ids, newest last
+let recentIds: number[] = [];
+const decoding = new Set<number>();
+
+function touchPhoto(id: number) {
+  recentIds = [...recentIds.filter((r) => r !== id), id].slice(
+    -DECODED_CACHE_SIZE
+  );
+}
+
+// store a decoded image and release the ones that are no longer recent
+function setImage(id: number, image: ImageBitmap) {
+  let used = false;
+  store.setState((state) => ({
+    ...state,
+    files: state.files.map((f) => {
+      if (f.id === id && !f.image && recentIds.includes(id)) {
+        used = true;
+        return { ...f, image };
+      }
+      if (f.image && !recentIds.includes(f.id)) {
+        f.image.close();
+        return { ...f, image: null };
+      }
+      return f;
+    }),
+  }));
+  if (!used) image.close();
+}
+
+function clearPhotos(total: number) {
+  store.setState((state) => {
+    state.files.forEach((f) => {
+      URL.revokeObjectURL(f.url);
+      f.thumb.close();
+      f.image?.close();
+    });
+    return { files: [], loadstate: [0, total] };
+  });
+  recentIds = [];
+}
 
 function usePhotoshop() {
   return useSyncExternalStore(store.subscribe, () => store.getSnapshot());
@@ -188,12 +243,16 @@ function getSpan(index: number): Point {
   return f ? cropSpan(f.width, f.height, f.crop.shape) : { x: 1, y: 1 };
 }
 
-function downloadImage(data: string, filename = "untitled.jpeg") {
-  var a = document.createElement("a");
-  a.href = data;
+function downloadImage(blob: Blob, filename = "untitled.jpeg") {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
+  a.remove();
+  // give the download time to start before releasing the blob
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function roundedRect(x: number, y: number, w: number, h: number, r: number) {
@@ -207,66 +266,49 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
   return roundRect;
 }
 
-function readFile(file: File): Promise<PhotoData | void> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = async function () {
-      const tags = await ExifReader.load(file);
+// Decode and thumbnail a photo off the main thread, then add it to the store.
+// Returns false if a newer photo list replaced this one while it loaded.
+async function readFile(
+  file: File,
+  withImage: boolean,
+  generation: number
+): Promise<boolean> {
+  let loaded: LoadedPhoto | undefined;
+  try {
+    loaded = await loadPhoto(file, withImage);
+  } catch (err) {
+    console.error(err);
+    if (generation === loadGeneration) alert("Unable to load image");
+  }
 
-      const img = new Image();
-      img.onload = () => {
-        const aspect = img.naturalWidth / img.naturalHeight;
-        const frameAspect =
-          (CANVAS_WIDTH - CANVAS_MARGIN * 2) /
-          (CANVAS_HEIGHT - CANVAS_MARGIN * 2);
+  if (generation !== loadGeneration) {
+    loaded?.thumb.close();
+    loaded?.image?.close();
+    return false;
+  }
 
-        let thumbW = 100;
-        let thumbH = 100 / aspect;
-
-        // size if portrait
-        if (aspect < frameAspect) {
-          thumbH = 100;
-          thumbW = 100 * aspect;
-        }
-
-        const thumbCanvas = document.createElement("canvas");
-        thumbCanvas.width = thumbW;
-        thumbCanvas.height = thumbH;
-
-        thumbCanvas
-          .getContext("2d", { alpha: false })
-          ?.drawImage(img, 0, 0, thumbW, thumbH);
-
-        const photo = {
-          url: thumbCanvas.toDataURL("image/jpeg", 0.6),
-          file,
-          exif: tags,
-          caption: "",
-          crop: DEFAULT_CROP,
-          // keep the full-resolution image so zooming stays sharp
-          image: img,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-        };
-
-        store.setState((state) => {
-          return {
-            ...state,
-            files: [...state.files, photo],
-            loadstate: [state.loadstate[0] + 1, state.loadstate[1]],
-          };
-        });
-
-        resolve(photo);
-      };
-      img.onerror = () => {
-        alert("Unable to load image");
-        resolve();
-      };
-      img.src = reader.result as string;
-    };
-    reader.readAsDataURL(file);
-  });
+  store.setState((state) => ({
+    ...state,
+    files: loaded
+      ? [
+          ...state.files,
+          {
+            id: nextPhotoId++,
+            url: URL.createObjectURL(loaded.thumbBlob),
+            file,
+            exif: loaded.exif,
+            caption: "",
+            crop: DEFAULT_CROP,
+            thumb: loaded.thumb,
+            image: loaded.image,
+            width: loaded.width,
+            height: loaded.height,
+          },
+        ]
+      : state.files,
+    loadstate: [state.loadstate[0] + 1, state.loadstate[1]],
+  }));
+  return true;
 }
 
 function App() {
@@ -293,6 +335,23 @@ function App() {
 
   const hasSelectedFile = files?.[selectedFile];
   const cropShape = hasSelectedFile?.crop.shape ?? "original";
+  const selectedId = hasSelectedFile?.id;
+  const selectedNeedsImage = !!hasSelectedFile && !hasSelectedFile.image;
+  const pendingCount = photoshop.loadstate[1] - photoshop.loadstate[0];
+
+  // decode the selected photo at working resolution, off the main thread
+  useEffect(() => {
+    if (selectedId === undefined) return;
+    touchPhoto(selectedId);
+    const photo = store.getSnapshot().files.find((f) => f.id === selectedId);
+    if (!photo || photo.image || decoding.has(selectedId)) return;
+
+    decoding.add(selectedId);
+    decodePhoto(photo.file)
+      .then((image) => setImage(selectedId, image))
+      .catch((err) => console.error(err))
+      .finally(() => decoding.delete(selectedId));
+  }, [selectedId, selectedNeedsImage]);
 
   useEffect(() => {
     const ctx = canvas.current?.getContext("2d", { alpha: false });
@@ -331,7 +390,10 @@ function App() {
           ? 100
           : CANVAS_MARGIN;
 
-      const { image, width: imgW, height: imgH, crop } = files[selectedFile];
+      const { image, thumb, width: imgW, height: imgH, crop } =
+        files[selectedFile];
+      // show the thumbnail scaled up until the full image is decoded
+      const src = image ?? thumb;
       const aspect = cropAspect(imgW, imgH, crop.shape);
 
       // calculate width and height if landscape
@@ -355,17 +417,17 @@ function App() {
       frameRef.current = { x, y, w, h };
 
       const span = cropSpan(imgW, imgH, crop.shape);
-      const sw = (imgW * span.x) / crop.zoom;
-      const sh = (imgH * span.y) / crop.zoom;
-      const sx = crop.cx * imgW - sw / 2;
-      const sy = crop.cy * imgH - sh / 2;
+      const sw = (src.width * span.x) / crop.zoom;
+      const sh = (src.height * span.y) / crop.zoom;
+      const sx = crop.cx * src.width - sw / 2;
+      const sy = crop.cy * src.height - sh / 2;
 
       ctx.imageSmoothingQuality = "high";
 
       if (glow) {
         ctx.filter = "blur(300px)";
         ctx.globalAlpha = 0.65;
-        ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h);
+        ctx.drawImage(src, sx, sy, sw, sh, x, y, w, h);
         ctx.filter = "none";
         ctx.globalAlpha = 1;
       }
@@ -374,7 +436,7 @@ function App() {
       if (rounded) {
         ctx.clip(roundedRect(x, y, w, h, CORNER_RADIUS));
       }
-      ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h);
+      ctx.drawImage(src, sx, sy, sw, sh, x, y, w, h);
       ctx.restore();
 
       ctx.fillStyle = bg === "black" ? "#999" : "#999";
@@ -546,33 +608,37 @@ function App() {
   }
 
   async function setFiles(
-    files: FileList | null,
+    fileList: FileList | null,
     action: "append" | "replace" = "replace"
   ) {
-    if (!files) return;
-
-    const first = files[0];
-
-    if (!first) return;
-
-    store.setState((state) => {
-      return { ...state, loadstate: [1, files.length] };
-    });
-
-    setState("loading");
+    // copy, as the input's FileList can change while we load
+    const files = [...(fileList ?? [])];
+    if (files.length === 0) return;
 
     if (action === "replace") {
-      store.setState((state) => {
-        return { ...state, files: [] };
-      });
+      loadGeneration++;
+      clearPhotos(files.length);
       setSelectedFile(0);
+      setState("loading");
+    } else {
+      store.setState((state) => ({
+        ...state,
+        loadstate: [state.loadstate[0], state.loadstate[1] + files.length],
+      }));
     }
+    const generation = loadGeneration;
 
+    // one at a time, so only one full-size decode is in memory
     for (let i = 0; i < files.length; i++) {
-      await readFile(files[i]);
+      const current = await readFile(
+        files[i],
+        action === "replace" && i === 0,
+        generation
+      );
+      if (!current) return;
+      // start editing as soon as the first photo is ready
+      if (i === 0) setState("editing");
     }
-
-    setState("editing");
   }
 
   return (
@@ -587,7 +653,21 @@ function App() {
             setFiles(e.target.files, "replace");
           }}
         />
-        <label className="filebutton" htmlFor="fileinput">
+        <label
+          className="filebutton"
+          htmlFor="fileinput"
+          onClick={(e) => {
+            // replacing clears the current photos, so check before opening the picker
+            if (
+              files.length > 0 &&
+              !window.confirm(
+                "Load new photos? Your current photos and edits will be lost."
+              )
+            ) {
+              e.preventDefault();
+            }
+          }}
+        >
           <svg
             width="24"
             height="24"
@@ -619,15 +699,14 @@ function App() {
         <button
           aria-label="Save"
           title="Save"
-          disabled={!hasSelectedFile}
-          onClick={async () => {
-            var dataURL = canvas.current?.toDataURL("image/jpeg", 1.0);
-
-            if (!dataURL) return;
-
-            downloadImage(
-              dataURL,
-              `${files?.[selectedFile]?.file.name?.replace(".", "_")}_mat.jpeg`
+          // wait for the full image so the placeholder is never exported
+          disabled={!hasSelectedFile?.image}
+          onClick={() => {
+            const name = files?.[selectedFile]?.file.name?.replace(".", "_");
+            canvas.current?.toBlob(
+              (blob) => blob && downloadImage(blob, `${name}_mat.jpeg`),
+              "image/jpeg",
+              1.0
             );
           }}
         >
@@ -856,13 +935,21 @@ function App() {
             onDragStart={(e) => e.preventDefault()}
             onClick={() => setSelectedFile(i)}
             className={selectedFile === i ? "selected" : ""}
-            key={i + f.file.name}
+            key={f.id}
             src={f.url}
             alt={f.file.name}
+            decoding="async"
             style={{ width: 100, height: 100, background: bg }}
           />
         ))}
-        {files?.length > 0 && (
+        {pendingCount > 0 && files.length > 0 && (
+          <div
+            className="filmstrip-pending"
+            role="status"
+            aria-label={`Loading ${pendingCount} more`}
+          />
+        )}
+        {files.length > 0 && (
           <div className="filmstrip-add">
             <input
               id="addfileinput"
