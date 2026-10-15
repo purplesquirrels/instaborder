@@ -7,14 +7,34 @@ import {
   useSyncExternalStore,
 } from "react";
 
+interface Crop {
+  zoom: number;
+  // visible centre, in normalised image coords (0-1)
+  cx: number;
+  cy: number;
+}
+
 interface PhotoData {
   url: string;
   file: File;
   exif: ExifReader.Tags | null;
   caption: string;
-  image: HTMLCanvasElement;
+  crop: Crop;
+  image: CanvasImageSource;
   width: number;
   height: number;
+}
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 const ASPECT_RATIO = 4 / 5;
@@ -22,6 +42,8 @@ const CANVAS_WIDTH = 1440;
 const CANVAS_HEIGHT = 1440 / ASPECT_RATIO;
 const CANVAS_MARGIN = 25;
 const CORNER_RADIUS = 20;
+const MAX_ZOOM = 5;
+const DEFAULT_CROP: Crop = { zoom: 1, cx: 0.5, cy: 0.5 };
 
 const APP_STATE = {
   Start: "start",
@@ -70,6 +92,62 @@ function setCaption(index: number, caption: string) {
   }));
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+// keep the zoom in range and the image covering the whole frame
+function clampCrop({ zoom, cx, cy }: Crop): Crop {
+  const z = clamp(zoom, 1, MAX_ZOOM);
+  const half = 0.5 / z;
+  return { zoom: z, cx: clamp(cx, half, 1 - half), cy: clamp(cy, half, 1 - half) };
+}
+
+function setCrop(index: number, crop: Crop) {
+  store.setState((state) => ({
+    ...state,
+    files: state.files.map((f, i) =>
+      i === index ? { ...f, crop: clampCrop(crop) } : f
+    ),
+  }));
+}
+
+// Zoom to `zoom`, moving the image point that was under `from` (in `crop`)
+// so it ends up under `to`. All points are in canvas coords.
+function zoomAbout(
+  crop: Crop,
+  frame: Rect,
+  from: Point,
+  to: Point,
+  zoom: number
+): Crop {
+  const z = clamp(zoom, 1, MAX_ZOOM);
+  const fx = frame.x + frame.w / 2;
+  const fy = frame.y + frame.h / 2;
+  const u = crop.cx + (from.x - fx) / (frame.w * crop.zoom);
+  const v = crop.cy + (from.y - fy) / (frame.h * crop.zoom);
+  return {
+    zoom: z,
+    cx: u - (to.x - fx) / (frame.w * z),
+    cy: v - (to.y - fy) / (frame.h * z),
+  };
+}
+
+function toCanvasPoint(
+  el: HTMLCanvasElement,
+  e: { clientX: number; clientY: number }
+): Point {
+  const rect = el.getBoundingClientRect();
+  return {
+    x: ((e.clientX - rect.left) * CANVAS_WIDTH) / rect.width,
+    y: ((e.clientY - rect.top) * CANVAS_HEIGHT) / rect.height,
+  };
+}
+
+function getCrop(index: number) {
+  return store.getSnapshot().files[index]?.crop;
+}
+
 function downloadImage(data: string, filename = "untitled.jpeg") {
   var a = document.createElement("a");
   a.href = data;
@@ -92,41 +170,24 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
 function readFile(file: File): Promise<PhotoData | void> {
   return new Promise((resolve) => {
     const reader = new FileReader();
-    const offscreenCanvas = document.createElement("canvas");
     reader.onloadend = async function () {
       const tags = await ExifReader.load(file);
 
       const img = new Image();
       img.onload = () => {
-        const marginL = CANVAS_MARGIN;
-        const marginR = CANVAS_MARGIN;
-        const marginT = CANVAS_MARGIN;
-        const marginB = CANVAS_MARGIN;
-
         const aspect = img.naturalWidth / img.naturalHeight;
-
-        // calculate width and height if landscape
-        let w = CANVAS_WIDTH - marginL - marginR;
-        let h = w / aspect;
+        const frameAspect =
+          (CANVAS_WIDTH - CANVAS_MARGIN * 2) /
+          (CANVAS_HEIGHT - CANVAS_MARGIN * 2);
 
         let thumbW = 100;
         let thumbH = 100 / aspect;
 
         // size if portrait
-        if (h > CANVAS_HEIGHT - marginT - marginB) {
-          h = CANVAS_HEIGHT - marginT - marginB;
-          w = h * aspect;
-
+        if (aspect < frameAspect) {
           thumbH = 100;
           thumbW = 100 * aspect;
         }
-
-        offscreenCanvas.width = w;
-        offscreenCanvas.height = h;
-
-        offscreenCanvas
-          .getContext("2d", { alpha: false })
-          ?.drawImage(img, 0, 0, w, h);
 
         const thumbCanvas = document.createElement("canvas");
         thumbCanvas.width = thumbW;
@@ -141,9 +202,11 @@ function readFile(file: File): Promise<PhotoData | void> {
           file,
           exif: tags,
           caption: "",
-          image: offscreenCanvas,
-          width: w,
-          height: h,
+          crop: DEFAULT_CROP,
+          // keep the full-resolution image so zooming stays sharp
+          image: img,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
         };
 
         store.setState((state) => {
@@ -168,6 +231,13 @@ function readFile(file: File): Promise<PhotoData | void> {
 
 function App() {
   const canvas = useRef<HTMLCanvasElement | null>(null);
+  // where the photo was last drawn, used to map gestures onto the image
+  const frameRef = useRef<Rect | null>(null);
+  const pointers = useRef(new Map<number, Point>());
+  const gesture = useRef<{ crop: Crop; pointers: Map<number, Point> } | null>(
+    null
+  );
+  const lastTap = useRef<{ time: number; x: number; y: number } | null>(null);
 
   const [exifEnabled, setExifEnabled] = useState(false);
   const [captionEnabled, setCaptionEnabled] = useState(false);
@@ -240,10 +310,20 @@ function App() {
         x = ctx.canvas.width * 0.5 - w * 0.5;
         y = marginT;
       }
+      frameRef.current = { x, y, w, h };
+
+      const { image, width: imgW, height: imgH, crop } = files[selectedFile];
+      const sw = imgW / crop.zoom;
+      const sh = imgH / crop.zoom;
+      const sx = crop.cx * imgW - sw / 2;
+      const sy = crop.cy * imgH - sh / 2;
+
+      ctx.imageSmoothingQuality = "high";
+
       if (glow) {
         ctx.filter = "blur(300px)";
         ctx.globalAlpha = 0.65;
-        ctx.drawImage(files[selectedFile].image, x, y, w, h);
+        ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h);
         ctx.filter = "none";
         ctx.globalAlpha = 1;
       }
@@ -252,7 +332,7 @@ function App() {
       if (rounded) {
         ctx.clip(roundedRect(x, y, w, h, CORNER_RADIUS));
       }
-      ctx.drawImage(files[selectedFile].image, x, y, w, h);
+      ctx.drawImage(image, sx, sy, sw, sh, x, y, w, h);
       ctx.restore();
 
       ctx.fillStyle = bg === "black" ? "#999" : "#999";
@@ -274,6 +354,139 @@ function App() {
       }
     }
   }, [files, selectedFile, exifEnabled, captionEnabled, bg, glow, rounded]);
+
+  useEffect(() => {
+    const el = canvas.current;
+    if (!el) return;
+
+    let safariGesture: Crop | null = null;
+
+    function onWheel(e: WheelEvent) {
+      const crop = getCrop(selectedFile);
+      const frame = frameRef.current;
+      if (!el || !crop || !frame) return;
+      e.preventDefault();
+
+      const p = toCanvasPoint(el, e);
+      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+
+      // trackpad pinch arrives as ctrl+wheel (except in Safari)
+      if (e.ctrlKey) {
+        if (safariGesture) return;
+        const zoom = crop.zoom * Math.exp(-e.deltaY * unit * 0.01);
+        setCrop(selectedFile, zoomAbout(crop, frame, p, p, zoom));
+      } else {
+        const rect = el.getBoundingClientRect();
+        const to = {
+          x: p.x - (e.deltaX * unit * CANVAS_WIDTH) / rect.width,
+          y: p.y - (e.deltaY * unit * CANVAS_HEIGHT) / rect.height,
+        };
+        setCrop(selectedFile, zoomAbout(crop, frame, p, to, crop.zoom));
+      }
+    }
+
+    // Safari's non-standard trackpad pinch events
+    function onGestureStart(e: Event) {
+      e.preventDefault();
+      // touch pinches are handled by the pointer events
+      if (pointers.current.size === 0) {
+        safariGesture = getCrop(selectedFile) ?? null;
+      }
+    }
+
+    function onGestureChange(e: Event) {
+      e.preventDefault();
+      const frame = frameRef.current;
+      if (!el || !safariGesture || !frame) return;
+      const ge = e as Event & { scale: number; clientX: number; clientY: number };
+      const p = toCanvasPoint(el, ge);
+      setCrop(
+        selectedFile,
+        zoomAbout(safariGesture, frame, p, p, safariGesture.zoom * ge.scale)
+      );
+    }
+
+    function onGestureEnd(e: Event) {
+      e.preventDefault();
+      safariGesture = null;
+    }
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("gesturestart", onGestureStart);
+    el.addEventListener("gesturechange", onGestureChange);
+    el.addEventListener("gestureend", onGestureEnd);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      el.removeEventListener("gestureend", onGestureEnd);
+    };
+  }, [selectedFile]);
+
+  function restartGesture() {
+    const crop = getCrop(selectedFile);
+    gesture.current = crop ? { crop, pointers: new Map(pointers.current) } : null;
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!hasSelectedFile) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    // double tap / double click resets the crop
+    if (pointers.current.size === 0) {
+      const last = lastTap.current;
+      if (
+        last &&
+        e.timeStamp - last.time < 300 &&
+        Math.hypot(e.clientX - last.x, e.clientY - last.y) < 30
+      ) {
+        setCrop(selectedFile, DEFAULT_CROP);
+        lastTap.current = null;
+      } else {
+        lastTap.current = { time: e.timeStamp, x: e.clientX, y: e.clientY };
+      }
+    }
+
+    pointers.current.set(e.pointerId, toCanvasPoint(e.currentTarget, e));
+    restartGesture();
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, toCanvasPoint(e.currentTarget, e));
+
+    const g = gesture.current;
+    const frame = frameRef.current;
+    if (!g || !frame) return;
+
+    const ids = [...g.pointers.keys()].filter((id) => pointers.current.has(id));
+
+    if (ids.length >= 2) {
+      // pinch: zoom by the change in finger distance, anchored at the midpoint
+      const [a0, b0] = [g.pointers.get(ids[0])!, g.pointers.get(ids[1])!];
+      const [a1, b1] = [
+        pointers.current.get(ids[0])!,
+        pointers.current.get(ids[1])!,
+      ];
+      const d0 = Math.max(Math.hypot(b0.x - a0.x, b0.y - a0.y), 1);
+      const d1 = Math.hypot(b1.x - a1.x, b1.y - a1.y);
+      const mid0 = { x: (a0.x + b0.x) / 2, y: (a0.y + b0.y) / 2 };
+      const mid1 = { x: (a1.x + b1.x) / 2, y: (a1.y + b1.y) / 2 };
+      setCrop(
+        selectedFile,
+        zoomAbout(g.crop, frame, mid0, mid1, (g.crop.zoom * d1) / d0)
+      );
+    } else if (ids.length === 1) {
+      const from = g.pointers.get(ids[0])!;
+      const to = pointers.current.get(ids[0])!;
+      setCrop(selectedFile, zoomAbout(g.crop, frame, from, to, g.crop.zoom));
+    }
+  }
+
+  function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!pointers.current.delete(e.pointerId)) return;
+    restartGesture();
+  }
 
   async function setFiles(
     files: FileList | null,
@@ -385,6 +598,10 @@ function App() {
           width={CANVAS_WIDTH}
           height={CANVAS_HEIGHT}
           style={{ aspectRatio: ASPECT_RATIO }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
         ></canvas>
         {files && files.length > 0 ? (
           <div className="actions">

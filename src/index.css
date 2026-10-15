@@ -142,7 +142,16 @@ canvas {
   background: #000;
   justify-self: center;
   align-self: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: grab;
   /* border: 2px solid #ccc; */
+
+  &:active {
+    cursor: grabbing;
+  }
 }
 #fileinput,
 #addfileinput {
