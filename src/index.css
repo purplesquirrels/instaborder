@@ -321,6 +321,23 @@ button,
   }
 }
 
+.caption-input {
+  width: 180px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1.5px solid #555;
+  border-radius: 8px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  line-height: 1;
+  outline: none;
+
+  &:focus {
+    border-color: #fff;
+  }
+}
+
 .screenreader {
   height: 1px !important;
   width: 1px !important;

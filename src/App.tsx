@@ -11,6 +11,7 @@ interface PhotoData {
   url: string;
   file: File;
   exif: ExifReader.Tags | null;
+  caption: string;
   image: HTMLCanvasElement;
   width: number;
   height: number;
@@ -60,6 +61,13 @@ const store = createStore<{
 
 function usePhotoshop() {
   return useSyncExternalStore(store.subscribe, () => store.getSnapshot());
+}
+
+function setCaption(index: number, caption: string) {
+  store.setState((state) => ({
+    ...state,
+    files: state.files.map((f, i) => (i === index ? { ...f, caption } : f)),
+  }));
 }
 
 function downloadImage(data: string, filename = "untitled.jpeg") {
@@ -132,6 +140,7 @@ function readFile(file: File): Promise<PhotoData | void> {
           url: thumbCanvas.toDataURL("image/jpeg", 0.6),
           file,
           exif: tags,
+          caption: "",
           image: offscreenCanvas,
           width: w,
           height: h,
@@ -161,6 +170,7 @@ function App() {
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
   const [exifEnabled, setExifEnabled] = useState(false);
+  const [captionEnabled, setCaptionEnabled] = useState(false);
   const [glow] = useState(false);
   const [bg, setBg] = useState<string>("black");
   const [rounded, setRounded] = useState<boolean>(true);
@@ -192,6 +202,10 @@ function App() {
         .filter(Boolean)
         .join(" | ");
 
+      const caption = files[selectedFile].caption.trim();
+      const showCaption = captionEnabled && caption !== "";
+      const showExif = exifEnabled && meta !== "";
+
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -199,7 +213,12 @@ function App() {
       const marginL = CANVAS_MARGIN;
       const marginR = CANVAS_MARGIN;
       const marginT = CANVAS_MARGIN;
-      const marginB = exifEnabled && meta !== "" ? 100 : CANVAS_MARGIN;
+      const marginB =
+        showCaption && showExif
+          ? 170
+          : showCaption || showExif
+          ? 100
+          : CANVAS_MARGIN;
 
       const aspect = files[selectedFile].width / files[selectedFile].height;
 
@@ -236,15 +255,25 @@ function App() {
       ctx.drawImage(files[selectedFile].image, x, y, w, h);
       ctx.restore();
 
-      if (exifEnabled) {
-        ctx.fillStyle = bg === "black" ? "#999" : "#999";
+      ctx.fillStyle = bg === "black" ? "#999" : "#999";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      if (showExif) {
         ctx.font = "bold 42px Courier New";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
         ctx.fillText(meta, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 48);
       }
+
+      if (showCaption) {
+        ctx.font = "42px Courier New";
+        ctx.fillText(
+          caption,
+          CANVAS_WIDTH / 2,
+          CANVAS_HEIGHT - (showExif ? 118 : 48)
+        );
+      }
     }
-  }, [files, selectedFile, exifEnabled, bg, glow, rounded]);
+  }, [files, selectedFile, exifEnabled, captionEnabled, bg, glow, rounded]);
 
   async function setFiles(
     files: FileList | null,
@@ -426,6 +455,38 @@ function App() {
                 />
               </svg>
             </label>
+            <label className="cb">
+              <input
+                disabled={!hasSelectedFile}
+                type="checkbox"
+                checked={captionEnabled}
+                onChange={(e: FormEvent<HTMLInputElement>) =>
+                  setCaptionEnabled(e.currentTarget.checked)
+                }
+              />
+              <span className="screenreader">Show caption</span>
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M4 4C4 3.44772 4.44772 3 5 3H19C19.5523 3 20 3.44772 20 4V7C20 7.55228 19.5523 8 19 8C18.4477 8 18 7.55228 18 7V5H13V19H15C15.5523 19 16 19.4477 16 20C16 20.5523 15.5523 21 15 21H9C8.44772 21 8 20.5523 8 20C8 19.4477 8.44772 19 9 19H11V5H6V7C6 7.55228 5.55228 8 5 8C4.44772 8 4 7.55228 4 7V4Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </label>
+            {captionEnabled ? (
+              <input
+                className="caption-input"
+                type="text"
+                placeholder="Caption"
+                value={files[selectedFile]?.caption ?? ""}
+                onChange={(e) => setCaption(selectedFile, e.currentTarget.value)}
+              />
+            ) : null}
             <label className="cb">
               <input
                 disabled={!hasSelectedFile}
