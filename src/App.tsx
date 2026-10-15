@@ -7,11 +7,14 @@ import {
   useSyncExternalStore,
 } from "react";
 
+type CropShape = "original" | "portrait" | "landscape";
+
 interface Crop {
   zoom: number;
   // visible centre, in normalised image coords (0-1)
   cx: number;
   cy: number;
+  shape: CropShape;
 }
 
 interface PhotoData {
@@ -43,7 +46,12 @@ const CANVAS_HEIGHT = 1440 / ASPECT_RATIO;
 const CANVAS_MARGIN = 25;
 const CORNER_RADIUS = 20;
 const MAX_ZOOM = 5;
-const DEFAULT_CROP: Crop = { zoom: 1, cx: 0.5, cy: 0.5 };
+const DEFAULT_CROP: Crop = { zoom: 1, cx: 0.5, cy: 0.5, shape: "original" };
+const NEXT_SHAPE: Record<CropShape, CropShape> = {
+  original: "portrait",
+  portrait: "landscape",
+  landscape: "original",
+};
 
 const APP_STATE = {
   Start: "start",
@@ -96,18 +104,43 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+// aspect ratio (w/h) the photo is shown at for a given crop shape;
+// cropped shapes use 3:2 to match 35mm film
+function cropAspect(width: number, height: number, shape: CropShape) {
+  if (shape === "portrait") return 2 / 3;
+  if (shape === "landscape") return 3 / 2;
+  return width / height;
+}
+
+// size of the visible window at zoom 1, in normalised image coords (0-1)
+function cropSpan(width: number, height: number, shape: CropShape): Point {
+  const imageAspect = width / height;
+  const aspect = cropAspect(width, height, shape);
+  return aspect < imageAspect
+    ? { x: aspect / imageAspect, y: 1 }
+    : { x: 1, y: imageAspect / aspect };
+}
+
 // keep the zoom in range and the image covering the whole frame
-function clampCrop({ zoom, cx, cy }: Crop): Crop {
+function clampCrop({ zoom, cx, cy, shape }: Crop, span: Point): Crop {
   const z = clamp(zoom, 1, MAX_ZOOM);
-  const half = 0.5 / z;
-  return { zoom: z, cx: clamp(cx, half, 1 - half), cy: clamp(cy, half, 1 - half) };
+  const hx = span.x / (2 * z);
+  const hy = span.y / (2 * z);
+  return {
+    zoom: z,
+    cx: clamp(cx, hx, 1 - hx),
+    cy: clamp(cy, hy, 1 - hy),
+    shape,
+  };
 }
 
 function setCrop(index: number, crop: Crop) {
   store.setState((state) => ({
     ...state,
     files: state.files.map((f, i) =>
-      i === index ? { ...f, crop: clampCrop(crop) } : f
+      i === index
+        ? { ...f, crop: clampCrop(crop, cropSpan(f.width, f.height, crop.shape)) }
+        : f
     ),
   }));
 }
@@ -116,6 +149,7 @@ function setCrop(index: number, crop: Crop) {
 // so it ends up under `to`. All points are in canvas coords.
 function zoomAbout(
   crop: Crop,
+  span: Point,
   frame: Rect,
   from: Point,
   to: Point,
@@ -124,12 +158,13 @@ function zoomAbout(
   const z = clamp(zoom, 1, MAX_ZOOM);
   const fx = frame.x + frame.w / 2;
   const fy = frame.y + frame.h / 2;
-  const u = crop.cx + (from.x - fx) / (frame.w * crop.zoom);
-  const v = crop.cy + (from.y - fy) / (frame.h * crop.zoom);
+  const u = crop.cx + ((from.x - fx) * span.x) / (frame.w * crop.zoom);
+  const v = crop.cy + ((from.y - fy) * span.y) / (frame.h * crop.zoom);
   return {
     zoom: z,
-    cx: u - (to.x - fx) / (frame.w * z),
-    cy: v - (to.y - fy) / (frame.h * z),
+    cx: u - ((to.x - fx) * span.x) / (frame.w * z),
+    cy: v - ((to.y - fy) * span.y) / (frame.h * z),
+    shape: crop.shape,
   };
 }
 
@@ -146,6 +181,11 @@ function toCanvasPoint(
 
 function getCrop(index: number) {
   return store.getSnapshot().files[index]?.crop;
+}
+
+function getSpan(index: number): Point {
+  const f = store.getSnapshot().files[index];
+  return f ? cropSpan(f.width, f.height, f.crop.shape) : { x: 1, y: 1 };
 }
 
 function downloadImage(data: string, filename = "untitled.jpeg") {
@@ -252,6 +292,7 @@ function App() {
   const files = photoshop.files;
 
   const hasSelectedFile = files?.[selectedFile];
+  const cropShape = hasSelectedFile?.crop.shape ?? "original";
 
   useEffect(() => {
     const ctx = canvas.current?.getContext("2d", { alpha: false });
@@ -290,7 +331,8 @@ function App() {
           ? 100
           : CANVAS_MARGIN;
 
-      const aspect = files[selectedFile].width / files[selectedFile].height;
+      const { image, width: imgW, height: imgH, crop } = files[selectedFile];
+      const aspect = cropAspect(imgW, imgH, crop.shape);
 
       // calculate width and height if landscape
       let w = CANVAS_WIDTH - marginL - marginR;
@@ -312,9 +354,9 @@ function App() {
       }
       frameRef.current = { x, y, w, h };
 
-      const { image, width: imgW, height: imgH, crop } = files[selectedFile];
-      const sw = imgW / crop.zoom;
-      const sh = imgH / crop.zoom;
+      const span = cropSpan(imgW, imgH, crop.shape);
+      const sw = (imgW * span.x) / crop.zoom;
+      const sh = (imgH * span.y) / crop.zoom;
       const sx = crop.cx * imgW - sw / 2;
       const sy = crop.cy * imgH - sh / 2;
 
@@ -367,6 +409,7 @@ function App() {
       if (!el || !crop || !frame) return;
       e.preventDefault();
 
+      const span = getSpan(selectedFile);
       const p = toCanvasPoint(el, e);
       const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
 
@@ -374,14 +417,14 @@ function App() {
       if (e.ctrlKey) {
         if (safariGesture) return;
         const zoom = crop.zoom * Math.exp(-e.deltaY * unit * 0.01);
-        setCrop(selectedFile, zoomAbout(crop, frame, p, p, zoom));
+        setCrop(selectedFile, zoomAbout(crop, span, frame, p, p, zoom));
       } else {
         const rect = el.getBoundingClientRect();
         const to = {
           x: p.x - (e.deltaX * unit * CANVAS_WIDTH) / rect.width,
           y: p.y - (e.deltaY * unit * CANVAS_HEIGHT) / rect.height,
         };
-        setCrop(selectedFile, zoomAbout(crop, frame, p, to, crop.zoom));
+        setCrop(selectedFile, zoomAbout(crop, span, frame, p, to, crop.zoom));
       }
     }
 
@@ -402,7 +445,14 @@ function App() {
       const p = toCanvasPoint(el, ge);
       setCrop(
         selectedFile,
-        zoomAbout(safariGesture, frame, p, p, safariGesture.zoom * ge.scale)
+        zoomAbout(
+          safariGesture,
+          getSpan(selectedFile),
+          frame,
+          p,
+          p,
+          safariGesture.zoom * ge.scale
+        )
       );
     }
 
@@ -440,7 +490,10 @@ function App() {
         e.timeStamp - last.time < 300 &&
         Math.hypot(e.clientX - last.x, e.clientY - last.y) < 30
       ) {
-        setCrop(selectedFile, DEFAULT_CROP);
+        setCrop(selectedFile, {
+          ...DEFAULT_CROP,
+          shape: getCrop(selectedFile)?.shape ?? DEFAULT_CROP.shape,
+        });
         lastTap.current = null;
       } else {
         lastTap.current = { time: e.timeStamp, x: e.clientX, y: e.clientY };
@@ -459,6 +512,7 @@ function App() {
     const frame = frameRef.current;
     if (!g || !frame) return;
 
+    const span = getSpan(selectedFile);
     const ids = [...g.pointers.keys()].filter((id) => pointers.current.has(id));
 
     if (ids.length >= 2) {
@@ -474,12 +528,15 @@ function App() {
       const mid1 = { x: (a1.x + b1.x) / 2, y: (a1.y + b1.y) / 2 };
       setCrop(
         selectedFile,
-        zoomAbout(g.crop, frame, mid0, mid1, (g.crop.zoom * d1) / d0)
+        zoomAbout(g.crop, span, frame, mid0, mid1, (g.crop.zoom * d1) / d0)
       );
     } else if (ids.length === 1) {
       const from = g.pointers.get(ids[0])!;
       const to = pointers.current.get(ids[0])!;
-      setCrop(selectedFile, zoomAbout(g.crop, frame, from, to, g.crop.zoom));
+      setCrop(
+        selectedFile,
+        zoomAbout(g.crop, span, frame, from, to, g.crop.zoom)
+      );
     }
   }
 
@@ -646,6 +703,48 @@ function App() {
                   />
                 </svg>
               )}
+            </label>
+            <label className="cb">
+              <input
+                disabled={!hasSelectedFile}
+                type="checkbox"
+                checked={cropShape !== "original"}
+                onChange={() => {
+                  const crop = getCrop(selectedFile);
+                  if (crop) {
+                    setCrop(selectedFile, {
+                      ...crop,
+                      shape: NEXT_SHAPE[crop.shape],
+                    });
+                  }
+                }}
+              />
+              <span className="screenreader">
+                {cropShape === "portrait"
+                  ? "Crop: Portrait"
+                  : cropShape === "landscape"
+                  ? "Crop: Landscape"
+                  : "Crop: Original"}
+              </span>
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                {cropShape === "portrait" ? (
+                  <rect x="6" y="3" width="12" height="18" rx="2" />
+                ) : cropShape === "landscape" ? (
+                  <rect x="3" y="6" width="18" height="12" rx="2" />
+                ) : (
+                  <path d="M6 2V16C6 17.1046 6.89543 18 8 18H22M2 6H16C17.1046 6 18 6.89543 18 8V22" />
+                )}
+              </svg>
             </label>
             <label className="cb">
               <input
