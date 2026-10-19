@@ -8,6 +8,7 @@ import {
 } from "react";
 import { decodePhoto, loadPhoto } from "./imageLoader";
 import type { LoadedPhoto } from "./imageProcessing";
+import { useAppUpdate } from "./useAppUpdate";
 
 type CropShape = "original" | "portrait" | "landscape";
 
@@ -337,6 +338,14 @@ function App() {
   const [state, setState] = useState<AppState>("start");
 
   const photoshop = usePhotoshop();
+  const { needRefresh, update } = useAppUpdate();
+
+  // with nothing open there is no work to lose, so switch to a new version
+  // straight away; otherwise offer it and let the user choose when
+  const updateNow = needRefresh && state === "start";
+  useEffect(() => {
+    if (updateNow) update();
+  }, [updateNow, update]);
 
   const files = photoshop.files;
 
@@ -1012,9 +1021,15 @@ function App() {
             }}
             style={{ opacity: 0 }}
             src="/loader.html"
-            sandbox="allow-scripts"
+            sandbox="allow-scripts allow-same-origin"
             title="Loading"
           ></iframe>
+        </div>
+      ) : null}
+      {needRefresh && state !== "start" ? (
+        <div className="update-banner" role="status">
+          <span>New version available</span>
+          <button onClick={update}>Reload</button>
         </div>
       ) : null}
     </>

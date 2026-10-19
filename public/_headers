@@ -1,0 +1,16 @@
+# Service worker, manifest and HTML must always be revalidated so a new
+# deploy is picked up as soon as the app is online.
+/sw.js
+  Cache-Control: no-cache
+/registerSW.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
+/
+  Cache-Control: no-cache
+/*.html
+  Cache-Control: no-cache
+
+# Hashed build output never changes under the same name.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

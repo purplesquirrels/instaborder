@@ -2,6 +2,22 @@ Add simple frames around photos for Instagram.
 
 https://photomatic.netlify.app/
 
+## Offline / PWA
+
+The app is an installable PWA that works offline. `vite-plugin-pwa` generates a
+Workbox service worker that precaches the whole build. When a new version is
+deployed it is installed in the background: the app reloads into it straight
+away if no photo is open, otherwise a "New version available" banner appears.
+`public/_headers` stops Netlify/browsers caching `sw.js` and the HTML.
+
+The service worker is disabled under `npm run dev`; test it with:
+
+```
+npm run build && npm run preview
+```
+
+Icons are generated from `public/icon.svg` with `npm run generate-pwa-assets`.
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
