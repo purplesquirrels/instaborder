@@ -98,35 +98,39 @@ const store = createStore<{
 });
 
 // how many photos keep a decoded full image; the rest drop back to thumbnails
-const DECODED_CACHE_SIZE = 2;
+const DECODED_CACHE_SIZE = 1;
 let nextPhotoId = 0;
 // bumped when the photo list is replaced, so stale loads are discarded
 let loadGeneration = 0;
 // most recently viewed photo ids, newest last
 let recentIds: number[] = [];
-const decoding = new Set<number>();
 
 function touchPhoto(id: number) {
   recentIds = [...recentIds.filter((r) => r !== id), id].slice(
-    -DECODED_CACHE_SIZE
+    -DECODED_CACHE_SIZE,
   );
+  // free photos that dropped out now, before the next decode needs the memory
+  const isStale = (f: PhotoData) => f.image && !recentIds.includes(f.id);
+  if (!store.getSnapshot().files.some(isStale)) return;
+  store.setState((state) => ({
+    ...state,
+    files: state.files.map((f) => {
+      if (!isStale(f)) return f;
+      f.image?.close();
+      return { ...f, image: null };
+    }),
+  }));
 }
 
-// store a decoded image and release the ones that are no longer recent
+// store a decoded image, unless the photo is gone or no longer recent
 function setImage(id: number, image: ImageBitmap) {
   let used = false;
   store.setState((state) => ({
     ...state,
     files: state.files.map((f) => {
-      if (f.id === id && !f.image && recentIds.includes(id)) {
-        used = true;
-        return { ...f, image };
-      }
-      if (f.image && !recentIds.includes(f.id)) {
-        f.image.close();
-        return { ...f, image: null };
-      }
-      return f;
+      if (f.id !== id || f.image || !recentIds.includes(id)) return f;
+      used = true;
+      return { ...f, image };
     }),
   }));
   if (!used) image.close();
@@ -194,8 +198,11 @@ function setCrop(index: number, crop: Crop) {
     ...state,
     files: state.files.map((f, i) =>
       i === index
-        ? { ...f, crop: clampCrop(crop, cropSpan(f.width, f.height, crop.shape)) }
-        : f
+        ? {
+            ...f,
+            crop: clampCrop(crop, cropSpan(f.width, f.height, crop.shape)),
+          }
+        : f,
     ),
   }));
 }
@@ -208,7 +215,7 @@ function zoomAbout(
   frame: Rect,
   from: Point,
   to: Point,
-  zoom: number
+  zoom: number,
 ): Crop {
   const z = clamp(zoom, 1, MAX_ZOOM);
   const fx = frame.x + frame.w / 2;
@@ -225,7 +232,7 @@ function zoomAbout(
 
 function toCanvasPoint(
   el: HTMLCanvasElement,
-  e: { clientX: number; clientY: number }
+  e: { clientX: number; clientY: number },
 ): Point {
   const rect = el.getBoundingClientRect();
   return {
@@ -271,7 +278,7 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number) {
 async function readFile(
   file: File,
   withImage: boolean,
-  generation: number
+  generation: number,
 ): Promise<boolean> {
   let loaded: LoadedPhoto | undefined;
   try {
@@ -317,7 +324,7 @@ function App() {
   const frameRef = useRef<Rect | null>(null);
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<{ crop: Crop; pointers: Map<number, Point> } | null>(
-    null
+    null,
   );
   const lastTap = useRef<{ time: number; x: number; y: number } | null>(null);
 
@@ -344,13 +351,17 @@ function App() {
     if (selectedId === undefined) return;
     touchPhoto(selectedId);
     const photo = store.getSnapshot().files.find((f) => f.id === selectedId);
-    if (!photo || photo.image || decoding.has(selectedId)) return;
+    if (!photo || photo.image) return;
 
-    decoding.add(selectedId);
-    decodePhoto(photo.file)
+    // a fresh request per selection; moving on cancels it, so coming back
+    // always starts a new decode instead of waiting on a discarded one
+    const controller = new AbortController();
+    decodePhoto(photo.file, controller.signal)
       .then((image) => setImage(selectedId, image))
-      .catch((err) => console.error(err))
-      .finally(() => decoding.delete(selectedId));
+      .catch((err) => {
+        if (!controller.signal.aborted) console.error(err);
+      });
+    return () => controller.abort();
   }, [selectedId, selectedNeedsImage]);
 
   useEffect(() => {
@@ -387,11 +398,16 @@ function App() {
         showCaption && showExif
           ? 170
           : showCaption || showExif
-          ? 100
-          : CANVAS_MARGIN;
+            ? 100
+            : CANVAS_MARGIN;
 
-      const { image, thumb, width: imgW, height: imgH, crop } =
-        files[selectedFile];
+      const {
+        image,
+        thumb,
+        width: imgW,
+        height: imgH,
+        crop,
+      } = files[selectedFile];
       // show the thumbnail scaled up until the full image is decoded
       const src = image ?? thumb;
       const aspect = cropAspect(imgW, imgH, crop.shape);
@@ -453,7 +469,7 @@ function App() {
         ctx.fillText(
           caption,
           CANVAS_WIDTH / 2,
-          CANVAS_HEIGHT - (showExif ? 118 : 48)
+          CANVAS_HEIGHT - (showExif ? 118 : 48),
         );
       }
     }
@@ -503,7 +519,11 @@ function App() {
       e.preventDefault();
       const frame = frameRef.current;
       if (!el || !safariGesture || !frame) return;
-      const ge = e as Event & { scale: number; clientX: number; clientY: number };
+      const ge = e as Event & {
+        scale: number;
+        clientX: number;
+        clientY: number;
+      };
       const p = toCanvasPoint(el, ge);
       setCrop(
         selectedFile,
@@ -513,8 +533,8 @@ function App() {
           frame,
           p,
           p,
-          safariGesture.zoom * ge.scale
-        )
+          safariGesture.zoom * ge.scale,
+        ),
       );
     }
 
@@ -537,7 +557,9 @@ function App() {
 
   function restartGesture() {
     const crop = getCrop(selectedFile);
-    gesture.current = crop ? { crop, pointers: new Map(pointers.current) } : null;
+    gesture.current = crop
+      ? { crop, pointers: new Map(pointers.current) }
+      : null;
   }
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -590,14 +612,14 @@ function App() {
       const mid1 = { x: (a1.x + b1.x) / 2, y: (a1.y + b1.y) / 2 };
       setCrop(
         selectedFile,
-        zoomAbout(g.crop, span, frame, mid0, mid1, (g.crop.zoom * d1) / d0)
+        zoomAbout(g.crop, span, frame, mid0, mid1, (g.crop.zoom * d1) / d0),
       );
     } else if (ids.length === 1) {
       const from = g.pointers.get(ids[0])!;
       const to = pointers.current.get(ids[0])!;
       setCrop(
         selectedFile,
-        zoomAbout(g.crop, span, frame, from, to, g.crop.zoom)
+        zoomAbout(g.crop, span, frame, from, to, g.crop.zoom),
       );
     }
   }
@@ -609,7 +631,7 @@ function App() {
 
   async function setFiles(
     fileList: FileList | null,
-    action: "append" | "replace" = "replace"
+    action: "append" | "replace" = "replace",
   ) {
     // copy, as the input's FileList can change while we load
     const files = [...(fileList ?? [])];
@@ -633,7 +655,7 @@ function App() {
       const current = await readFile(
         files[i],
         action === "replace" && i === 0,
-        generation
+        generation,
       );
       if (!current) return;
       // start editing as soon as the first photo is ready
@@ -661,7 +683,7 @@ function App() {
             if (
               files.length > 0 &&
               !window.confirm(
-                "Load new photos? Your current photos and edits will be lost."
+                "Load new photos? Your current photos and edits will be lost.",
               )
             ) {
               e.preventDefault();
@@ -706,7 +728,7 @@ function App() {
             canvas.current?.toBlob(
               (blob) => blob && downloadImage(blob, `${name}_mat.jpeg`),
               "image/jpeg",
-              1.0
+              1.0,
             );
           }}
         >
@@ -802,8 +824,8 @@ function App() {
                 {cropShape === "portrait"
                   ? "Crop: Portrait"
                   : cropShape === "landscape"
-                  ? "Crop: Landscape"
-                  : "Crop: Original"}
+                    ? "Crop: Landscape"
+                    : "Crop: Original"}
               </span>
               <svg
                 width="24"
@@ -879,7 +901,9 @@ function App() {
                 type="text"
                 placeholder="Caption"
                 value={files[selectedFile]?.caption ?? ""}
-                onChange={(e) => setCaption(selectedFile, e.currentTarget.value)}
+                onChange={(e) =>
+                  setCaption(selectedFile, e.currentTarget.value)
+                }
               />
             ) : null}
             <label className="cb">
