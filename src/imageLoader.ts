@@ -3,9 +3,11 @@ import {
   loadPhotoData,
   type LoadedPhoto,
   type WorkerCancel,
+  type WorkerRelease,
   type WorkerRequest,
   type WorkerResponse,
 } from "./imageProcessing";
+import { removeCopies } from "./photoStorage";
 
 // WorkerRequest without its id, keeping the union members apart
 type Request = WorkerRequest extends infer R
@@ -26,6 +28,7 @@ let useWorker =
   typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined";
 let worker: Worker | null = null;
 let nextId = 0;
+let nextKey = 0;
 const pending = new Map<number, Pending>();
 
 // close bitmaps from a result nobody is waiting for any more
@@ -35,6 +38,7 @@ function release(result: LoadedPhoto | ImageBitmap) {
   } else {
     result.thumb.close();
     result.image?.close();
+    releaseCopies([result.source]);
   }
 }
 
@@ -52,7 +56,7 @@ function settle(msg: WorkerResponse) {
 function runLocally(id: number, req: Request) {
   const job =
     req.type === "load"
-      ? loadPhotoData(req.file, req.withImage)
+      ? loadPhotoData(req.file, req.withImage, req.key)
       : decodePhotoImage(req.file);
   job.then(
     (result) => settle({ id, result }),
@@ -100,7 +104,15 @@ function run(req: Request, signal?: AbortSignal): Promise<unknown> {
 // Decode a photo and build its thumbnail; `withImage` also returns the
 // working-resolution bitmap so the photo can be shown straight away.
 export function loadPhoto(file: File, withImage: boolean) {
-  return run({ type: "load", file, withImage }) as Promise<LoadedPhoto>;
+  const key = `photo-${nextKey++}`;
+  return run({ type: "load", file, withImage, key }) as Promise<LoadedPhoto>;
+}
+
+// Delete the stored copies behind these sources once their photos are gone.
+export function releaseCopies(sources: File[]) {
+  const names = sources.map((f) => f.name);
+  if (worker) worker.postMessage({ type: "release", names } as WorkerRelease);
+  else void removeCopies(names);
 }
 
 // Aborting drops the request if it hasn't started, and releases its result

@@ -6,7 +6,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { decodePhoto, loadPhoto } from "./imageLoader";
+import { decodePhoto, loadPhoto, releaseCopies } from "./imageLoader";
 import type { LoadedPhoto } from "./imageProcessing";
 import { useAppUpdate } from "./useAppUpdate";
 
@@ -24,7 +24,11 @@ interface PhotoData {
   id: number;
   // object URL of the filmstrip thumbnail
   url: string;
+  // the picked file; only its name is used after loading, as Android may
+  // revoke access to it
   file: File;
+  // stored copy that full-size decodes read from
+  source: File;
   exif: ExifReader.Tags | null;
   caption: string;
   crop: Crop;
@@ -144,6 +148,7 @@ function clearPhotos(total: number) {
       f.thumb.close();
       f.image?.close();
     });
+    releaseCopies(state.files.map((f) => f.source));
     return { files: [], loadstate: [0, total] };
   });
   recentIds = [];
@@ -292,6 +297,7 @@ async function readFile(
   if (generation !== loadGeneration) {
     loaded?.thumb.close();
     loaded?.image?.close();
+    if (loaded) releaseCopies([loaded.source]);
     return false;
   }
 
@@ -304,6 +310,7 @@ async function readFile(
             id: nextPhotoId++,
             url: URL.createObjectURL(loaded.thumbBlob),
             file,
+            source: loaded.source,
             exif: loaded.exif,
             caption: "",
             crop: DEFAULT_CROP,
@@ -365,7 +372,7 @@ function App() {
     // a fresh request per selection; moving on cancels it, so coming back
     // always starts a new decode instead of waiting on a discarded one
     const controller = new AbortController();
-    decodePhoto(photo.file, controller.signal)
+    decodePhoto(photo.source, controller.signal)
       .then((image) => setImage(selectedId, image))
       .catch((err) => {
         if (!controller.signal.aborted) console.error(err);

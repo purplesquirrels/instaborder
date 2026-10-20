@@ -1,4 +1,5 @@
 import * as ExifReader from "exifreader";
+import { storeCopy } from "./photoStorage";
 
 // working resolution cap; photos up to this size are kept at full resolution
 export const MAX_PIXELS = 32_777_216;
@@ -17,14 +18,19 @@ export interface LoadedPhoto {
   thumb: ImageBitmap;
   thumbBlob: Blob;
   image: ImageBitmap | null;
+  // stored copy of the file (or the original if that failed), for decoding later
+  source: File;
 }
 
 export type WorkerRequest =
-  | { id: number; type: "load"; file: File; withImage: boolean }
+  | { id: number; type: "load"; file: File; withImage: boolean; key: string }
   | { id: number; type: "decode"; file: File };
 
 // stop a queued request whose result is no longer wanted
 export type WorkerCancel = { id: number; type: "cancel" };
+
+// delete stored copies of photos that have been removed
+export type WorkerRelease = { type: "release"; names: string[] };
 
 export type WorkerResponse =
   | { id: number; result: LoadedPhoto | ImageBitmap }
@@ -118,11 +124,17 @@ export async function decodePhotoImage(file: File): Promise<ImageBitmap> {
   return image;
 }
 
+// `key` names the stored copy and must be unique within the page
 export async function loadPhotoData(
   file: File,
   withImage: boolean,
+  key: string,
 ): Promise<LoadedPhoto> {
-  const [exif, full] = await Promise.all([readExif(file), decodeFull(file)]);
+  const [exif, full, source] = await Promise.all([
+    readExif(file),
+    decodeFull(file),
+    storeCopy(file, key),
+  ]);
   let image: ImageBitmap | null = null;
   try {
     const { width, height } = full;
@@ -136,7 +148,7 @@ export async function loadPhotoData(
     const thumbBlob = await canvasToBlob(thumbCanvas, "image/jpeg", 0.7);
     const thumb = await canvasToBitmap(thumbCanvas);
     if (withImage) image = await toWorking(full);
-    return { width, height, exif, thumb, thumbBlob, image };
+    return { width, height, exif, thumb, thumbBlob, image, source };
   } finally {
     if (image !== full) full.close();
   }
