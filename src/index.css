@@ -129,6 +129,12 @@ body {
   justify-self: center;
 }
 
+.toggles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .canvas-wrap {
   display: grid;
   place-content: center;
@@ -347,6 +353,27 @@ button,
   }
 }
 
+/* on narrow screens, stack the caption input under the toggles; the toggle
+   row sizes the single grid column (width: 0 keeps the input from widening
+   it) and min-width stretches the input to fill it */
+@media (max-width: 600px) {
+  .actions:has(.caption-input) {
+    display: grid;
+  }
+
+  .caption-input {
+    width: 0;
+    min-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* give the extra caption row's height (34px input + 8px gap) back from
+     the canvas so the filmstrip isn't squeezed */
+  .canvas-wrap:has(.caption-input) canvas {
+    max-height: calc(100dvh - 330px - 42px);
+  }
+}
+
 .screenreader {
   height: 1px !important;
   width: 1px !important;
@@ -379,6 +406,33 @@ button,
   }
   img.selected {
     border: 4px solid oklch(0.55 0.29 289.09);
+  }
+  .filmstrip-item {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+  }
+  .filmstrip-delete {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    background: hsl(0deg 0% 0% / 60%);
+    backdrop-filter: blur(4px);
+    cursor: pointer;
+    &:before {
+      content: none;
+    }
+    svg {
+      width: 16px;
+      height: 16px;
+    }
   }
   .filmstrip-add {
     padding: 1rem;
