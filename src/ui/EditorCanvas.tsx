@@ -2,22 +2,30 @@ import { useEffect, useRef } from "react";
 import { editor } from "../core";
 import { attachGestures } from "../core/gestures";
 import { ASPECT_RATIO, CANVAS_HEIGHT, CANVAS_WIDTH } from "../core/layout";
-import { renderFrame } from "../core/render";
+import { renderFrame, renderGuides } from "../core/render";
 import type { Photo, Settings } from "../core/types";
 
 export function EditorCanvas({
   photo,
   settings,
+  snapGuide,
 }: {
   photo: Photo | undefined;
   settings: Settings;
+  snapGuide: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    const ctx = canvas.current?.getContext("2d", { alpha: false });
-    if (ctx) renderFrame(ctx, photo, settings);
-  }, [photo, settings]);
+    const el = canvas.current;
+    const ctx = el?.getContext("2d", { alpha: false });
+    if (!el || !ctx) return;
+    renderFrame(ctx, photo, settings);
+    if (snapGuide) {
+      const pixel = CANVAS_WIDTH / el.clientWidth;
+      renderGuides(ctx, photo, settings, pixel);
+    }
+  }, [photo, settings, snapGuide]);
 
   useEffect(() => {
     if (canvas.current) return attachGestures(canvas.current, editor);

@@ -41,8 +41,8 @@ export function NavBar({
         <AddPhotosIcon />
       </label>
       <span className="spacer" />
-      <span className="app-title">Photo-mat-ic</span>
-      <span className="spacer" />
+      {/* <span className="app-title">Photo-mat-ic</span>
+      <span className="spacer" /> */}
       <button
         aria-label="Save"
         title="Save"

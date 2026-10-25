@@ -11,7 +11,7 @@ import { useEditor } from "./useEditor";
 
 function App() {
   const state = useEditor();
-  const { photos, settings, phase, selectedIndex } = state;
+  const { photos, settings, phase, selectedIndex, snapGuide } = state;
   const photo = selectedPhoto(state);
   const { needRefresh, update } = useAppUpdate();
 
@@ -26,7 +26,7 @@ function App() {
     <>
       <NavBar hasPhotos={photos.length > 0} photo={photo} settings={settings} />
       <div className="canvas-wrap">
-        <EditorCanvas photo={photo} settings={settings} />
+        <EditorCanvas photo={photo} settings={settings} snapGuide={snapGuide} />
         {photos.length > 0 ? (
           <Toolbar photo={photo} settings={settings} />
         ) : null}

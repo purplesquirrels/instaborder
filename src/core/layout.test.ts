@@ -89,11 +89,27 @@ describe("computeLayout", () => {
     expect(empty.caption).toBeNull();
   });
 
-  it("maps the crop to the visible part of the photo", () => {
-    const { source } = computeLayout(
-      photo({ crop: { zoom: 2, cx: 0.25, cy: 0.75, shape: "original" } }),
+  it("maps the crop to how the photo is drawn in the frame", () => {
+    const { frame, view } = computeLayout(
+      photo({ crop: { ...DEFAULT_CROP, zoom: 2, cx: 0.25, cy: 0.75 } }),
       DEFAULT_SETTINGS,
     );
-    expect(source).toEqual({ x: 0, y: 0.5, w: 0.5, h: 0.5 });
+    expect(view.cx).toBe(0.25);
+    expect(view.cy).toBe(0.75);
+    expect(view.angle).toBe(0);
+    // half the photo's width fills the frame
+    expect(view.scale).toBeCloseTo(frame.w / 1500);
+  });
+
+  it("turns the frame upright once the photo is past 45°", () => {
+    const at = (degrees: number) =>
+      computeLayout(
+        photo({ crop: { ...DEFAULT_CROP, angle: (degrees * Math.PI) / 180 } }),
+        DEFAULT_SETTINGS,
+      ).frame;
+    expect(at(45).w).toBeGreaterThan(at(45).h);
+    expect(at(50).w).toBeLessThan(at(50).h);
+    expect(at(90).w / at(90).h).toBeCloseTo(2 / 3);
+    expect(at(180).w / at(180).h).toBeCloseTo(3 / 2);
   });
 });

@@ -8,6 +8,8 @@ export interface Crop {
   cx: number;
   cy: number;
   shape: CropShape;
+  // clockwise turn, in radians (-π, π]
+  angle: number;
 }
 
 export interface Photo {
@@ -61,4 +63,6 @@ export interface EditorState {
   selectedIndex: number;
   phase: Phase;
   settings: Settings;
+  // show the snapping guides, while a turn is snapped to a multiple of 45°
+  snapGuide: boolean;
 }

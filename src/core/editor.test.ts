@@ -15,10 +15,11 @@ interface Deferred<T, A> {
 }
 
 function setup() {
-  const loads: Deferred<LoadedPhoto, { file: File; withImage: boolean }>[] =
-    [];
-  const decodes: Deferred<ImageBitmap, { source: File; signal?: AbortSignal }>[] =
-    [];
+  const loads: Deferred<LoadedPhoto, { file: File; withImage: boolean }>[] = [];
+  const decodes: Deferred<
+    ImageBitmap,
+    { source: File; signal?: AbortSignal }
+  >[] = [];
   const deps = {
     loadPhoto: vi.fn(
       (file: File, withImage: boolean) =>
@@ -234,12 +235,13 @@ describe("editing", () => {
     void editor.openPhotos([file("a.jpg")], "replace");
     await finishLoad(0);
 
-    editor.setCrop({ zoom: 50, cx: 2, cy: -1, shape: "original" });
+    editor.setCrop({ zoom: 50, cx: 2, cy: -1, shape: "original", angle: 0 });
     expect(editor.getSnapshot().photos[0].crop).toEqual({
       zoom: 5,
       cx: 0.9,
       cy: 0.1,
       shape: "original",
+      angle: 0,
     });
 
     editor.cycleShape();
@@ -251,6 +253,7 @@ describe("editing", () => {
       cx: 0.5,
       cy: 0.5,
       shape: "portrait",
+      angle: 0,
     });
   });
 

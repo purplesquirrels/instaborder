@@ -1,5 +1,5 @@
 import type { LoadedPhoto } from "../image/imageProcessing";
-import { clampCrop, cropSpan, DEFAULT_CROP, NEXT_SHAPE } from "./crop";
+import { clampCrop, DEFAULT_CROP, NEXT_SHAPE } from "./crop";
 import { createStore } from "./store";
 import type { Crop, EditorState, Photo, Settings } from "./types";
 
@@ -45,6 +45,7 @@ export function createEditor(deps: EditorDeps) {
     selectedIndex: 0,
     phase: "start",
     settings: DEFAULT_SETTINGS,
+    snapGuide: false,
   });
   const { getSnapshot, setState, subscribe } = store;
 
@@ -253,8 +254,13 @@ export function createEditor(deps: EditorDeps) {
   function setCrop(crop: Crop) {
     updateSelected((f) => ({
       ...f,
-      crop: clampCrop(crop, cropSpan(f.width, f.height, crop.shape)),
+      crop: clampCrop(crop, f.width, f.height),
     }));
+  }
+
+  function setSnapGuide(snapGuide: boolean) {
+    if (getSnapshot().snapGuide === snapGuide) return;
+    setState((state) => ({ ...state, snapGuide }));
   }
 
   function cycleShape() {
@@ -262,7 +268,7 @@ export function createEditor(deps: EditorDeps) {
     if (crop) setCrop({ ...crop, shape: NEXT_SHAPE[crop.shape] });
   }
 
-  // back to the whole photo, keeping the crop shape
+  // back to the whole, upright photo, keeping the crop shape
   function resetCrop() {
     const crop = selectedPhoto(getSnapshot())?.crop;
     if (crop) setCrop({ ...DEFAULT_CROP, shape: crop.shape });
@@ -283,6 +289,7 @@ export function createEditor(deps: EditorDeps) {
     select,
     setCaption,
     setCrop,
+    setSnapGuide,
     cycleShape,
     resetCrop,
     setSettings,

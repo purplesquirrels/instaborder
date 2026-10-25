@@ -1,5 +1,5 @@
 import type * as ExifReader from "exifreader";
-import { cropAspect, cropSpan } from "./crop";
+import { cropAspect, cropScale } from "./crop";
 import type { Photo, Rect, Settings } from "./types";
 
 export const ASPECT_RATIO = 4 / 5;
@@ -17,8 +17,10 @@ const SECOND_LINE_BOTTOM = 118;
 export interface Layout {
   // where the photo is drawn, in canvas coords
   frame: Rect;
-  // the visible part of the photo, in normalised image coords (0-1)
-  source: Rect;
+  // how the photo is drawn into the frame: its point at the frame's centre,
+  // in normalised image coords (0-1), the clockwise turn in radians, and the
+  // canvas pixels per image pixel
+  view: { cx: number; cy: number; angle: number; scale: number };
   // EXIF line and its baseline, if shown
   exif: { text: string; y: number } | null;
   // caption line and its baseline, if shown
@@ -63,7 +65,7 @@ export function computeLayout(photo: LayoutPhoto, settings: Settings): Layout {
         : CANVAS_MARGIN;
 
   const { width, height, crop } = photo;
-  const aspect = cropAspect(width, height, crop.shape);
+  const aspect = cropAspect(width, height, crop);
 
   // calculate width and height if landscape
   let w = CANVAS_WIDTH - marginL - marginR;
@@ -84,13 +86,16 @@ export function computeLayout(photo: LayoutPhoto, settings: Settings): Layout {
     y = marginT;
   }
 
-  const span = cropSpan(width, height, crop.shape);
-  const sw = span.x / crop.zoom;
-  const sh = span.y / crop.zoom;
+  const frame = { x, y, w, h };
 
   return {
-    frame: { x, y, w, h },
-    source: { x: crop.cx - sw / 2, y: crop.cy - sh / 2, w: sw, h: sh },
+    frame,
+    view: {
+      cx: crop.cx,
+      cy: crop.cy,
+      angle: crop.angle,
+      scale: cropScale(photo, crop, frame),
+    },
     exif: showExif ? { text: meta, y: CANVAS_HEIGHT - TEXT_BOTTOM } : null,
     caption: showCaption
       ? {

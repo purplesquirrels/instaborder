@@ -1,13 +1,23 @@
-import { cropSpan, zoomAbout } from "./crop";
+import { snapAngle, transformAbout } from "./crop";
 import { selectedPhoto, type Editor } from "./editor";
 import { CANVAS_HEIGHT, CANVAS_WIDTH, computeLayout } from "./layout";
 import type { Crop, Point } from "./types";
 
 // Safari's non-standard trackpad pinch event
-type GestureEvent = Event & { scale: number; clientX: number; clientY: number };
+type GestureEvent = Event & {
+  scale: number;
+  // clockwise, in degrees
+  rotation: number;
+  clientX: number;
+  clientY: number;
+};
 
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_DISTANCE = 30;
+// radians turned per pixel of shift+wheel scrolling
+const WHEEL_TURN = 0.002;
+// how long after the last shift+wheel event the turn counts as finished
+const WHEEL_TURN_END_MS = 250;
 
 function toCanvasPoint(
   el: HTMLCanvasElement,
@@ -20,13 +30,17 @@ function toCanvasPoint(
   };
 }
 
-// Pan and zoom the selected photo's crop with the mouse, touch and trackpad.
+// Pan, zoom and turn the selected photo's crop with the mouse, touch and
+// trackpad.
 // Returns a function that removes the listeners.
 export function attachGestures(el: HTMLCanvasElement, editor: Editor) {
   const pointers = new Map<number, Point>();
   let gesture: { crop: Crop; pointers: Map<number, Point> } | null = null;
   let lastTap: { time: number; x: number; y: number } | null = null;
   let safariGesture: Crop | null = null;
+  // the unsnapped angle of a shift+wheel turn, so snapping doesn't stall it
+  let wheelAngle: number | null = null;
+  let wheelTimer: ReturnType<typeof setTimeout> | undefined;
 
   // the selected photo, with where it's drawn and its crop window
   function current() {
@@ -35,9 +49,28 @@ export function attachGestures(el: HTMLCanvasElement, editor: Editor) {
     if (!photo) return null;
     return {
       crop: photo.crop,
-      span: cropSpan(photo.width, photo.height, photo.crop.shape),
-      frame: computeLayout(photo, state.settings).frame,
+      photo,
+      frameOf: (crop: Crop) =>
+        computeLayout({ ...photo, crop }, state.settings).frame,
     };
+  }
+
+  // Move `start` by a gesture, snapping its angle to multiples of 45° and
+  // showing the guides while it's snapped.
+  function transform(
+    start: Crop,
+    from: Point,
+    to: Point,
+    zoom: number,
+    angle: number,
+  ) {
+    const c = current();
+    if (!c) return;
+    const snap = snapAngle(angle);
+    editor.setCrop(
+      transformAbout(start, c.photo, c.frameOf, from, to, zoom, snap.angle),
+    );
+    editor.setSnapGuide(snap.snapped);
   }
 
   function onWheel(e: WheelEvent) {
@@ -45,7 +78,7 @@ export function attachGestures(el: HTMLCanvasElement, editor: Editor) {
     if (!c) return;
     e.preventDefault();
 
-    const { crop, span, frame } = c;
+    const { crop, photo, frameOf } = c;
     const p = toCanvasPoint(el, e);
     const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
 
@@ -53,14 +86,24 @@ export function attachGestures(el: HTMLCanvasElement, editor: Editor) {
     if (e.ctrlKey) {
       if (safariGesture) return;
       const zoom = crop.zoom * Math.exp(-e.deltaY * unit * 0.01);
-      editor.setCrop(zoomAbout(crop, span, frame, p, p, zoom));
+      editor.setCrop(transformAbout(crop, photo, frameOf, p, p, zoom));
+    } else if (e.shiftKey) {
+      // some browsers send shift+wheel as horizontal scrolling
+      const delta = (e.deltaY || e.deltaX) * unit;
+      wheelAngle = (wheelAngle ?? crop.angle) + delta * WHEEL_TURN;
+      transform(crop, p, p, crop.zoom, wheelAngle);
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {
+        wheelAngle = null;
+        editor.setSnapGuide(false);
+      }, WHEEL_TURN_END_MS);
     } else {
       const rect = el.getBoundingClientRect();
       const to = {
         x: p.x - (e.deltaX * unit * CANVAS_WIDTH) / rect.width,
         y: p.y - (e.deltaY * unit * CANVAS_HEIGHT) / rect.height,
       };
-      editor.setCrop(zoomAbout(crop, span, frame, p, to, crop.zoom));
+      editor.setCrop(transformAbout(crop, photo, frameOf, p, to, crop.zoom));
     }
   }
 
@@ -72,25 +115,22 @@ export function attachGestures(el: HTMLCanvasElement, editor: Editor) {
 
   function onGestureChange(e: Event) {
     e.preventDefault();
-    const c = current();
-    if (!safariGesture || !c) return;
+    if (!safariGesture) return;
     const ge = e as GestureEvent;
     const p = toCanvasPoint(el, ge);
-    editor.setCrop(
-      zoomAbout(
-        safariGesture,
-        c.span,
-        c.frame,
-        p,
-        p,
-        safariGesture.zoom * ge.scale,
-      ),
+    transform(
+      safariGesture,
+      p,
+      p,
+      safariGesture.zoom * ge.scale,
+      safariGesture.angle + (ge.rotation * Math.PI) / 180,
     );
   }
 
   function onGestureEnd(e: Event) {
     e.preventDefault();
     safariGesture = null;
+    editor.setSnapGuide(false);
   }
 
   function restartGesture() {
@@ -129,29 +169,39 @@ export function attachGestures(el: HTMLCanvasElement, editor: Editor) {
     const c = current();
     if (!g || !c) return;
 
-    const { span, frame } = c;
     const ids = [...g.pointers.keys()].filter((id) => pointers.has(id));
 
     if (ids.length >= 2) {
-      // pinch: zoom by the change in finger distance, anchored at the midpoint
+      // pinch: zoom by the change in finger distance and turn by the change in
+      // their angle, anchored at the midpoint
       const [a0, b0] = [g.pointers.get(ids[0])!, g.pointers.get(ids[1])!];
       const [a1, b1] = [pointers.get(ids[0])!, pointers.get(ids[1])!];
       const d0 = Math.max(Math.hypot(b0.x - a0.x, b0.y - a0.y), 1);
       const d1 = Math.hypot(b1.x - a1.x, b1.y - a1.y);
       const mid0 = { x: (a0.x + b0.x) / 2, y: (a0.y + b0.y) / 2 };
       const mid1 = { x: (a1.x + b1.x) / 2, y: (a1.y + b1.y) / 2 };
-      editor.setCrop(
-        zoomAbout(g.crop, span, frame, mid0, mid1, (g.crop.zoom * d1) / d0),
+      const turn =
+        Math.atan2(b1.y - a1.y, b1.x - a1.x) -
+        Math.atan2(b0.y - a0.y, b0.x - a0.x);
+      transform(
+        g.crop,
+        mid0,
+        mid1,
+        (g.crop.zoom * d1) / d0,
+        g.crop.angle + turn,
       );
     } else if (ids.length === 1) {
       const from = g.pointers.get(ids[0])!;
       const to = pointers.get(ids[0])!;
-      editor.setCrop(zoomAbout(g.crop, span, frame, from, to, g.crop.zoom));
+      editor.setCrop(
+        transformAbout(g.crop, c.photo, c.frameOf, from, to, g.crop.zoom),
+      );
     }
   }
 
   function onPointerUp(e: PointerEvent) {
     if (!pointers.delete(e.pointerId)) return;
+    if (pointers.size < 2) editor.setSnapGuide(false);
     restartGesture();
   }
 
@@ -170,6 +220,7 @@ export function attachGestures(el: HTMLCanvasElement, editor: Editor) {
     el.addEventListener(type, fn as EventListener, options);
   }
   return () => {
+    clearTimeout(wheelTimer);
     for (const [type, fn] of listeners) {
       el.removeEventListener(type, fn as EventListener);
     }
